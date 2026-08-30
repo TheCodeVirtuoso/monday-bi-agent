@@ -505,7 +505,11 @@ class MondayBackend:
     }
 
     def __init__(self, token: str | None = None) -> None:
-        self.token = token or config.MONDAY_API_TOKEN
+        # Stripped again at the point of use, not only in config: a token with
+        # a stray newline is rejected by httpx as an "Illegal header value",
+        # an error that names neither the variable nor the whitespace. Cheap
+        # insurance against a failure mode that is invisible in a dashboard.
+        self.token = (token or config.MONDAY_API_TOKEN).strip()
         if not self.token:
             raise DataSourceError("MONDAY_API_TOKEN is not set.")
 

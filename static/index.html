@@ -220,6 +220,15 @@ async function health() {
   const txt = document.getElementById('statusText');
   try {
     const r = await fetch('/api/health');
+    // During a redeploy the host returns an HTML error page, not JSON.
+    // Calling .json() on it throws, and reporting that as "unreachable" is
+    // wrong and unhelpful — the server is there, it is restarting.
+    if (!r.ok) {
+      dot.className = 'dot bad';
+      txt.textContent = `restarting (HTTP ${r.status}) — retrying`;
+      setTimeout(health, 5000);
+      return;
+    }
     const j = await r.json();
     if (j.status === 'ok') {
       dot.className = 'dot ok';
@@ -235,8 +244,9 @@ async function health() {
       txt.textContent = j.detail || j.status;
     }
   } catch (e) {
-    document.getElementById('dot').className = 'dot bad';
-    txt.textContent = 'server unreachable';
+    dot.className = 'dot bad';
+    txt.textContent = 'starting up — retrying';
+    setTimeout(health, 5000);
   }
 }
 
