@@ -619,8 +619,50 @@ async def load_all() -> dict[str, BoardData]:
     This is the only place fan-out happens. Both boards are independent
     network/disk reads, so they overlap; the agents above this layer reason
     over already-loaded data rather than each triggering their own fetch.
+
+    Uncached by design — tests call this directly and must not share state.
+    Application code should use :func:`get_cached_boards`.
     """
     deals, work_orders = await asyncio.gather(
         load_board("deals"), load_board("work_orders")
     )
     return {"deals": deals, "work_orders": work_orders}
+
+
+# --------------------------------------------------------------------------
+# Process-wide cache
+# --------------------------------------------------------------------------
+# Board data is read-only and identical for every caller, so exactly one copy
+# should exist per process. Without this, each chat session held its own copy
+# and every health check triggered a fresh 522-item fetch — which exhausted
+# both the memory of a small instance and monday's rate limit. Load once.
+
+_cache: dict[str, BoardData] | None = None
+_cache_lock: asyncio.Lock | None = None
+
+
+def _lock() -> asyncio.Lock:
+    # Created lazily: an asyncio.Lock built at import time binds to whichever
+    # loop happens to be current, which is not the one uvicorn ends up running.
+    global _cache_lock
+    if _cache_lock is None:
+        _cache_lock = asyncio.Lock()
+    return _cache_lock
+
+
+async def get_cached_boards(refresh: bool = False) -> dict[str, BoardData]:
+    """Return the shared board data, loading it on first use.
+
+    ``refresh=True`` forces a re-read — the only way to pick up board edits
+    made in monday.com after the process started.
+    """
+    global _cache
+    async with _lock():
+        if _cache is None or refresh:
+            _cache = await load_all()
+    return _cache
+
+
+def clear_cache() -> None:
+    global _cache
+    _cache = None

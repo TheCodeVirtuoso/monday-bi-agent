@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 import config
 import llm
-from data_source import DataSourceError, load_all
+from data_source import DataSourceError, get_cached_boards
 from orchestrator import Orchestrator
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -51,6 +51,7 @@ class ChatRequest(BaseModel):
 
 class ResetRequest(BaseModel):
     session_id: str = "default"
+    refresh_data: bool = False
 
 
 @app.get("/")
@@ -71,7 +72,10 @@ async def health() -> dict:
     backend = "file" if config.USE_MOCK_DATA else "monday.com"
     result: dict = {"backend": backend, "llm": llm.describe_provider()}
     try:
-        boards = await load_all()
+        # Uses the shared cache: a health check is polled frequently, and
+        # re-reading 522 items from monday on every poll would exhaust both
+        # the instance's memory and monday's rate limit.
+        boards = await get_cached_boards()
         result["status"] = "ok"
         result["boards"] = {name: b.summary for name, b in boards.items()}
     except DataSourceError as exc:
@@ -85,11 +89,25 @@ async def health() -> dict:
 
 @app.post("/api/reset")
 async def reset(req: ResetRequest) -> dict:
+    """Clear a session's history; optionally re-read the boards.
+
+    ``refresh_data`` is the only way to pick up edits made in monday.com
+    after the process started, since board data is cached for the life of the
+    process.
+    """
     async with _sessions_lock:
         orch = _sessions.get(req.session_id)
         if orch:
             orch.history = []
-    return {"status": "ok"}
+            orch.boards = None
+
+    if req.refresh_data:
+        try:
+            await get_cached_boards(refresh=True)
+        except DataSourceError as exc:
+            return {"status": "data_error", "detail": str(exc)}
+
+    return {"status": "ok", "data_refreshed": req.refresh_data}
 
 
 @app.post("/api/chat")

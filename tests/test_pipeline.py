@@ -43,6 +43,27 @@ def test_no_junk_category_survives_into_the_records(boards):
     assert "Deal Stage" not in stages
 
 
+def test_boards_are_cached_process_wide_not_per_caller():
+    """One copy per process, or memory and monday's rate limit both suffer.
+
+    Each chat session used to hold its own board copy and every health check
+    forced a fresh 522-item fetch, which killed a small instance.
+    """
+    DS.clear_cache()
+    first = asyncio.run(DS.get_cached_boards())
+    second = asyncio.run(DS.get_cached_boards())
+    assert first is second, "get_cached_boards returned a fresh load"
+    assert first["deals"] is second["deals"]
+
+
+def test_cache_can_be_forced_to_refresh():
+    DS.clear_cache()
+    first = asyncio.run(DS.get_cached_boards())
+    refreshed = asyncio.run(DS.get_cached_boards(refresh=True))
+    assert refreshed is not first
+    assert len(refreshed["deals"].records) == len(first["deals"].records)
+
+
 def test_row_accounting_adds_up(boards):
     for board in boards.values():
         assert len(board.records) + board.rows_dropped == board.rows_in_source

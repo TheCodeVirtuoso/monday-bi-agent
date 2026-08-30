@@ -25,7 +25,7 @@ import agents as AG
 import analytics as A
 import llm
 import tools as T
-from data_source import BoardData, DataSourceError, load_all
+from data_source import BoardData, DataSourceError, get_cached_boards
 
 MAX_ORCHESTRATOR_ROUNDS = 4
 
@@ -137,9 +137,14 @@ class Orchestrator:
     # -- data ------------------------------------------------------------
 
     async def ensure_loaded(self) -> dict[str, BoardData]:
-        """Load both boards once per session, concurrently."""
+        """Attach the shared board data.
+
+        Shared process-wide rather than per session: the boards are read-only
+        and identical for everyone, so a copy per conversation wastes memory
+        and re-fetches from monday for no benefit.
+        """
         if self.boards is None:
-            self.boards = await load_all()
+            self.boards = await get_cached_boards()
         return self.boards
 
     def data_summary(self) -> dict:
