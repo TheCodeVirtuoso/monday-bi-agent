@@ -186,8 +186,17 @@ with gr.Blocks(title="monday.com BI Agent") as demo:
     )
 
 if __name__ == "__main__":
-    demo.launch(
+    import os
+
+    demo.queue().launch(
         server_name="0.0.0.0",
-        server_port=int(__import__("os").getenv("PORT", "7860")),
+        server_port=int(os.getenv("PORT", "7860")),
         theme=gr.themes.Soft(),
+        # Gradio 6 defaults to server-side rendering, which starts a Node
+        # proxy alongside the Python process. On Spaces that proxy shutting
+        # down takes the whole app with it — the first deploy started
+        # correctly, logged "Stopping Node.js server...", and exited 0. This
+        # app is a plain chat UI with nothing to pre-render, so SSR buys
+        # nothing here.
+        ssr_mode=False,
     )
