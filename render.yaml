@@ -1,0 +1,30 @@
+# Render blueprint. Deploy with: New -> Blueprint -> point at this repo.
+# Secrets are marked sync:false so Render prompts for them instead of
+# reading them from the repo — never commit a real key.
+services:
+  - type: web
+    name: monday-bi-agent
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13.3"
+      - key: LLM_PROVIDER
+        value: groq
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-120b
+      - key: GROQ_API_KEY
+        sync: false
+      # Leave the monday.com values unset to run against the workbooks in
+      # data/. Fill them in (and set USE_MOCK_DATA=false) to read live boards.
+      - key: USE_MOCK_DATA
+        value: "true"
+      - key: MONDAY_API_TOKEN
+        sync: false
+      - key: MONDAY_DEALS_BOARD_ID
+        sync: false
+      - key: MONDAY_WORK_ORDERS_BOARD_ID
+        sync: false

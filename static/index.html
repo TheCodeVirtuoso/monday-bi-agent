@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BI Agent</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1c1c1a;
+    --muted: #6b6b66;
+    --line: #e2e2dd;
+    --accent: #b45309;
+    --user-bg: #1c1c1a;
+    --user-ink: #f7f7f5;
+    --code-bg: #f0efec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16161a;
+      --panel: #1e1e23;
+      --ink: #ececea;
+      --muted: #9a9a94;
+      --line: #2e2e35;
+      --accent: #f0a868;
+      --user-bg: #ececea;
+      --user-ink: #16161a;
+      --code-bg: #26262c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.6 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+    display: flex; flex-direction: column; height: 100vh;
+  }
+  header {
+    padding: 14px 20px; border-bottom: 1px solid var(--line);
+    background: var(--panel); display: flex; align-items: baseline; gap: 12px;
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  header .status { margin-left: auto; font-size: 12px; color: var(--muted); }
+  header .dot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--muted); margin-right: 5px; vertical-align: middle;
+  }
+  header .dot.ok { background: #2f9e44; }
+  header .dot.bad { background: #c92a2a; }
+
+  #log { flex: 1; overflow-y: auto; padding: 22px 20px; }
+  .wrap { max-width: 760px; margin: 0 auto; }
+
+  .msg { margin-bottom: 20px; display: flex; }
+  .msg.user { justify-content: flex-end; }
+  .bubble {
+    max-width: 88%; padding: 11px 15px; border-radius: 14px;
+    border: 1px solid var(--line); background: var(--panel);
+  }
+  .msg.user .bubble {
+    background: var(--user-bg); color: var(--user-ink); border-color: transparent;
+  }
+  .bubble :first-child { margin-top: 0; }
+  .bubble :last-child { margin-bottom: 0; }
+  .bubble h3 { font-size: 14px; margin: 14px 0 6px; }
+  .bubble ul, .bubble ol { padding-left: 20px; margin: 8px 0; }
+  .bubble li { margin: 3px 0; }
+  .bubble code {
+    background: var(--code-bg); padding: 1px 5px; border-radius: 4px;
+    font: 13px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
+  }
+  .bubble table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 13px; }
+  .bubble th, .bubble td { border: 1px solid var(--line); padding: 5px 8px; text-align: left; }
+  .bubble th { background: var(--code-bg); font-weight: 600; }
+
+  .meta { font-size: 11.5px; color: var(--muted); margin-top: 8px; }
+  .progress { color: var(--muted); font-size: 13.5px; display: flex; align-items: center; gap: 8px; }
+  .spinner {
+    width: 11px; height: 11px; border: 2px solid var(--line);
+    border-top-color: var(--accent); border-radius: 50%;
+    animation: spin 0.7s linear infinite; flex: none;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .examples { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
+  .examples button {
+    font: inherit; font-size: 12.5px; padding: 6px 11px; cursor: pointer;
+    background: var(--panel); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 999px;
+  }
+  .examples button:hover { border-color: var(--accent); color: var(--accent); }
+
+  footer { border-top: 1px solid var(--line); background: var(--panel); padding: 12px 20px; }
+  form { max-width: 760px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
+  textarea {
+    flex: 1; resize: none; font: inherit; padding: 10px 12px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+    max-height: 140px;
+  }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button.send {
+    font: inherit; font-weight: 600; padding: 10px 16px; border-radius: 10px;
+    border: none; background: var(--accent); color: #fff; cursor: pointer;
+  }
+  button.send:disabled { opacity: 0.45; cursor: default; }
+  .toggle { font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 5px; padding-bottom: 10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>BI Agent</h1>
+  <span class="sub">deals &amp; work orders</span>
+  <span class="status" id="status"><span class="dot" id="dot"></span><span id="statusText">checking…</span></span>
+</header>
+
+<div id="log"><div class="wrap" id="logInner"></div></div>
+
+<footer>
+  <form id="form">
+    <label class="toggle"><input type="checkbox" id="leadership"> leadership update</label>
+    <textarea id="input" rows="1" placeholder="Ask about pipeline, delivery, or cash…" autofocus></textarea>
+    <button class="send" id="send" type="submit">Ask</button>
+  </form>
+</footer>
+
+<script>
+const logInner = document.getElementById('logInner');
+const form = document.getElementById('form');
+const input = document.getElementById('input');
+const send = document.getElementById('send');
+const leadership = document.getElementById('leadership');
+const sessionId = 's-' + Math.random().toString(36).slice(2);
+
+const EXAMPLES = [
+  "How's our pipeline looking this quarter?",
+  "What's stuck in delivery right now?",
+  "How much cash is outstanding, and who owes the most?",
+  "How are we doing in energy?",
+  "Which owner has the strongest pipeline?",
+  "Give me a leadership update."
+];
+
+function el(tag, cls, html) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (html !== undefined) n.innerHTML = html;
+  return n;
+}
+
+// Minimal markdown: enough for the agent's output, no library needed.
+function md(src) {
+  const esc = s => s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  const lines = esc(src).split('\n');
+  let out = '', inList = false;
+  const inline = s => s
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
+  for (let line of lines) {
+    if (/^\s*[-*]\s+/.test(line)) {
+      if (!inList) { out += '<ul>'; inList = true; }
+      out += '<li>' + inline(line.replace(/^\s*[-*]\s+/, '')) + '</li>';
+      continue;
+    }
+    if (inList) { out += '</ul>'; inList = false; }
+    if (/^###\s+/.test(line)) out += '<h3>' + inline(line.replace(/^###\s+/, '')) + '</h3>';
+    else if (/^##\s+/.test(line)) out += '<h3>' + inline(line.replace(/^##\s+/, '')) + '</h3>';
+    else if (line.trim() === '') out += '';
+    else out += '<p>' + inline(line) + '</p>';
+  }
+  if (inList) out += '</ul>';
+  return out;
+}
+
+function addUser(text) {
+  const m = el('div', 'msg user');
+  m.appendChild(el('div', 'bubble', md(text)));
+  logInner.appendChild(m);
+  scroll();
+}
+
+function addAgent() {
+  const m = el('div', 'msg agent');
+  const b = el('div', 'bubble');
+  b.innerHTML = '<div class="progress"><span class="spinner"></span><span class="ptext">Starting…</span></div>';
+  m.appendChild(b);
+  logInner.appendChild(m);
+  scroll();
+  return b;
+}
+
+function scroll() {
+  const log = document.getElementById('log');
+  log.scrollTop = log.scrollHeight;
+}
+
+function greet() {
+  const b = el('div', 'bubble');
+  b.innerHTML = md(
+    "Ask me about the **deals pipeline**, **delivery status**, or **cash and receivables**.\n\n" +
+    "I read both boards, compute the numbers deterministically, and tell you what's missing " +
+    "from the data rather than quietly rounding over it."
+  );
+  const ex = el('div', 'examples');
+  EXAMPLES.forEach(q => {
+    const btn = el('button', null, q);
+    btn.onclick = () => { input.value = q; form.requestSubmit(); };
+    ex.appendChild(btn);
+  });
+  b.appendChild(ex);
+  const m = el('div', 'msg agent');
+  m.appendChild(b);
+  logInner.appendChild(m);
+}
+
+async function health() {
+  const dot = document.getElementById('dot');
+  const txt = document.getElementById('statusText');
+  try {
+    const r = await fetch('/api/health');
+    const j = await r.json();
+    if (j.status === 'ok') {
+      dot.className = 'dot ok';
+      const d = j.boards.deals, w = j.boards.work_orders;
+      const model = (j.llm && j.llm.model) ? j.llm.model.split('/').pop() : '?';
+      txt.textContent = `${d.rows_usable} deals · ${w.rows_usable} work orders · ${j.backend} · ${model}`;
+      if (!j.llm || !j.llm.key_present) {
+        dot.className = 'dot bad';
+        txt.textContent += ` · set ${(j.llm && j.llm.key_env_var) || 'an API key'}`;
+      }
+    } else {
+      dot.className = 'dot bad';
+      txt.textContent = j.detail || j.status;
+    }
+  } catch (e) {
+    document.getElementById('dot').className = 'dot bad';
+    txt.textContent = 'server unreachable';
+  }
+}
+
+form.onsubmit = async (e) => {
+  e.preventDefault();
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  input.style.height = 'auto';
+  send.disabled = true;
+  addUser(text);
+  const bubble = addAgent();
+
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: text,
+        session_id: sessionId,
+        leadership: leadership.checked
+      })
+    });
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const parts = buf.split('\n\n');
+      buf = parts.pop();
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line.startsWith('data:')) continue;
+        const ev = JSON.parse(line.slice(5).trim());
+        if (ev.type === 'status') {
+          const p = bubble.querySelector('.ptext');
+          if (p) p.textContent = ev.detail + '…';
+          scroll();
+        } else if (ev.type === 'answer') {
+          bubble.innerHTML = md(ev.answer || '(no answer)');
+          if (ev.tool_calls && ev.tool_calls.length) {
+            bubble.appendChild(el('div', 'meta', 'via ' + ev.tool_calls.join(', ')));
+          }
+          scroll();
+        }
+      }
+    }
+  } catch (err) {
+    bubble.innerHTML = md('Could not reach the server. Is it still running?\n\n`' + err + '`');
+  } finally {
+    send.disabled = false;
+    input.focus();
+  }
+};
+
+input.addEventListener('input', () => {
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 140) + 'px';
+});
+input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); }
+});
+
+greet();
+health();
+</script>
+</body>
+</html>
