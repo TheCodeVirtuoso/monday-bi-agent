@@ -6,7 +6,7 @@ colorTo: blue
 sdk: gradio
 app_file: gradio_app.py
 pinned: false
-short_description: Conversational BI agent over monday.com deals and work orders
+short_description: BI agent over monday.com deals and work orders
 ---
 
 # monday.com BI Agent
