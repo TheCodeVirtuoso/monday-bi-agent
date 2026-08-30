@@ -152,7 +152,44 @@
   .shimmer.w80 { width: 80% } .shimmer.w60 { width: 60% }
   @keyframes shim { 0% { background-position: 100% 0 } 100% { background-position: 0 0 } }
 
+  /* ---------- charts ---------- */
+  .chart {
+    margin: 16px 0 4px; padding: 14px 16px 12px;
+    border: 1px solid var(--line); border-radius: 12px; background: var(--bg);
+  }
+  .chart-title {
+    font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--muted); font-weight: 650; margin-bottom: 12px;
+  }
+  .bar-row {
+    display: grid; grid-template-columns: minmax(70px, 26%) 1fr auto;
+    align-items: center; gap: 10px; margin-bottom: 8px; font-size: 12.5px;
+  }
+  .bar-row:last-child { margin-bottom: 0 }
+  .bar-label {
+    color: var(--ink-soft); overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+  }
+  .bar-track {
+    height: 8px; background: var(--line-soft); border-radius: 999px; overflow: hidden;
+  }
+  .bar-fill {
+    display: block; height: 100%; width: var(--w); border-radius: 999px;
+    background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 55%, transparent));
+    transform-origin: left; animation: grow .6s cubic-bezier(.2,.8,.3,1) both;
+    animation-delay: var(--d);
+  }
+  @keyframes grow { from { transform: scaleX(0) } to { transform: scaleX(1) } }
+  .bar-value {
+    font-variant-numeric: tabular-nums; color: var(--ink);
+    font-size: 12px; white-space: nowrap;
+  }
+
   /* ---------- meta / actions ---------- */
+  .warn {
+    background: color-mix(in srgb, var(--bad) 12%, transparent);
+    color: var(--bad); padding: 2px 8px; border-radius: 999px; font-size: 11px;
+  }
   .meta {
     font-size: 11.5px; color: var(--muted); margin-top: 12px;
     padding-top: 9px; border-top: 1px solid var(--line-soft);
@@ -382,10 +419,40 @@ function setSteps(bubble, steps) {
   scroll();
 }
 
-function finish(bubble, answer, tools) {
+/* Charts are built from the tool output, not from the prose, so a bar can
+   never disagree with the number it represents. Inline SVG — no library, no
+   CDN, nothing to fail to load. */
+function chart(spec) {
+  const rows = spec.rows.filter(r => r.value > 0);
+  if (rows.length < 2) return null;
+
+  const max = Math.max(...rows.map(r => r.value));
+  const box = el('div', 'chart');
+  box.appendChild(el('div', 'chart-title', esc(spec.title)));
+
+  rows.forEach((r, i) => {
+    const row = el('div', 'bar-row');
+    row.innerHTML =
+      `<span class="bar-label" title="${esc(r.label)}">${esc(r.label)}</span>
+       <span class="bar-track"><span class="bar-fill" style="--w:${(r.value / max * 100).toFixed(1)}%;--d:${i * 55}ms"></span></span>
+       <span class="bar-value">${esc(r.display || r.value)}</span>`;
+    box.appendChild(row);
+  });
+  return box;
+}
+
+function finish(bubble, answer, tools, charts, unverified) {
   bubble.innerHTML = md(answer || '_No answer was produced._');
 
+  (charts || []).forEach(spec => {
+    const c = chart(spec);
+    if (c) bubble.appendChild(c);
+  });
+
   const meta = el('div', 'meta');
+  if (unverified && unverified.length) {
+    meta.appendChild(el('span', 'warn', '⚠ unverified figure'));
+  }
   if (tools && tools.length) {
     meta.appendChild(el('span', null, 'via'));
     tools.forEach(t => meta.appendChild(el('span', 'pill', esc(t))));
@@ -440,11 +507,13 @@ async function health(attempt = 0) {
     if (j.status === 'ok') {
       dot.className = 'dot ok';
       const d = j.boards.deals, w = j.boards.work_orders;
-      const model = (j.llm && j.llm.model) ? j.llm.model.split('/').pop() : '?';
-      txt.textContent = `${d.rows_usable} deals · ${w.rows_usable} work orders · ${j.backend} · ${model}`;
+      // Deliberately no model name: which model answers is an implementation
+      // detail, and naming it invites judging the answer by its badge.
+      txt.textContent =
+        `${d.rows_usable} deals · ${w.rows_usable} work orders · live from ${j.backend}`;
       if (!j.llm || !j.llm.key_present) {
         dot.className = 'dot bad';
-        txt.textContent += ` · set ${(j.llm && j.llm.key_env_var) || 'an API key'}`;
+        txt.textContent = 'not configured — no model key set';
       }
     } else {
       dot.className = 'dot bad';
@@ -479,7 +548,7 @@ form.onsubmit = async (e) => {
     });
 
     if (!res.ok) {
-      finish(bubble, `The server returned **HTTP ${res.status}**.\n\nIt may still be starting up — wait a moment and try again.`, []);
+      finish(bubble, `The server returned **HTTP ${res.status}**.\n\nIt may still be starting up — wait a moment and try again.`, [], [], []);
       return;
     }
 
@@ -502,12 +571,12 @@ form.onsubmit = async (e) => {
           steps.push(ev.detail);
           setSteps(bubble, steps);
         } else if (ev.type === 'answer') {
-          finish(bubble, ev.answer, ev.tool_calls);
+          finish(bubble, ev.answer, ev.tool_calls, ev.charts, ev.unverified_figures);
         }
       }
     }
   } catch (err) {
-    finish(bubble, `Could not reach the server.\n\n\`${err}\`\n\nIf this is a free-tier host it may be waking up — try again in a moment.`, []);
+    finish(bubble, `Could not reach the server.\n\n\`${err}\`\n\nIf this is a free-tier host it may be waking up — try again in a moment.`, [], [], []);
   } finally {
     send.disabled = false;
     input.focus();

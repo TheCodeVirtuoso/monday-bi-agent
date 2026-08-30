@@ -155,6 +155,10 @@ async def chat(req: ChatRequest) -> StreamingResponse:
                 "answer": turn.answer,
                 "tool_calls": turn.tool_calls,
                 "error": turn.error,
+                # Plotted from the tool output rather than the prose, so a
+                # chart cannot disagree with the numbers behind it.
+                "charts": turn.charts,
+                "unverified_figures": turn.unverified_figures,
             }
         except Exception as exc:
             payload = {

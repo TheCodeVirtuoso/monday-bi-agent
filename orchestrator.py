@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -84,25 +85,92 @@ HOW TO WORK
    not in a footnote.
 
 HOW TO WRITE
-Lead with the answer. Then the supporting numbers. Then, only if it changes
-what the founder should do, the caveat. Keep it tight — a few short
-paragraphs or a compact list, not an essay. No preamble, no "great
-question", no closing offer of further help.
+
+Lead with the direct answer in the first sentence — the number they asked
+for, in bold. Then what it means. Then, only if it would change what they do,
+the caveat.
+
+Use a markdown table when you are reporting a breakdown across three or more
+groups (by stage, by sector, by owner). Tables render properly, and a
+five-row breakdown is unreadable as prose. Keep tables to the columns that
+matter — usually the group, the count and the value.
+
+Do NOT emit a section heading with nothing under it, and never write "not
+requested", "N/A" or "no data" as a section's content. If a question is only
+about pipeline, answer about pipeline and stop; do not stub out headings for
+delivery and cash.
+
+Keep it tight: a few short paragraphs, or a table plus two lines. No
+preamble, no "great question", no closing offer of further help.
 """.strip()
 
 LEADERSHIP_SUFFIX = """
 
-FORMAT: the user asked for a leadership update. Produce a markdown block they
-can paste straight into Slack or an email:
+LEADERSHIP UPDATE MODE.
 
-**Pipeline** - open value with coverage, deal count, late-stage count
-**Delivery** - active vs stalled work orders, anything at risk
-**Cash** - receivable outstanding, unbilled value, AR-priority accounts
-**Watch list** - 2-3 bullets on what actually needs a decision this week
-**Data caveats** - only the ones that would change a decision
+A leadership update is COMPLETE by definition. Before writing anything, call
+BOTH analyze_deals AND analyze_work_orders in the SAME turn, whatever the
+user's question was about. Ask the deals specialist for open pipeline value,
+deal count and late-stage count; ask the work orders specialist for execution
+status, anything stalled, and receivables including the largest debtor.
 
-Use real figures from the specialists. No placeholders.
+NEVER write "Not requested", "N/A", "no data" or any similar placeholder. If
+you are tempted to, you have not called the specialist you needed. An update
+with empty sections is worse than no update — a founder cannot paste it
+anywhere.
+
+Then produce a markdown block they can paste straight into Slack or email:
+
+**Pipeline** — open value with its coverage, deal count, late-stage count
+**Delivery** — active vs stalled work orders, and which ones are at risk
+**Cash** — receivable outstanding, unbilled value, AR-priority accounts
+**Watch list** — 2-3 bullets on what actually needs a decision this week
+**Data caveats** — only those that would change a decision
+
+The watch list is the part that earns the update. Numbers alone are a report;
+the watch list is what someone should DO about them.
 """.rstrip()
+
+
+_MONEY_IN_TEXT = re.compile(r"₹\s?[\d,]+(?:\.\d+)?\s?(?:Cr|L|K)?", re.I)
+
+
+def _normalise_figure(text: str) -> str:
+    return re.sub(r"[\s,]", "", text).upper()
+
+
+def collect_figures(payload) -> set[str]:
+    """Every rupee figure the tools actually produced, normalised."""
+    found: set[str] = set()
+    if isinstance(payload, dict):
+        for v in payload.values():
+            found |= collect_figures(v)
+    elif isinstance(payload, list):
+        for v in payload:
+            found |= collect_figures(v)
+    elif isinstance(payload, str):
+        for m in _MONEY_IN_TEXT.findall(payload):
+            found.add(_normalise_figure(m))
+    return found
+
+
+def unsupported_figures(answer: str, allowed: set[str]) -> list[str]:
+    """Rupee amounts in the answer that no tool produced.
+
+    The whole promise of this system is that its numbers are computed, not
+    generated. A prompt saying "quote the display string verbatim" is not
+    enough on its own — a live leadership update rendered ₹73.25 Cr as
+    ₹93.25 Cr, a single transposed digit that changes the headline by ₹20
+    crore. Checking is cheap; trusting is not.
+    """
+    if not allowed:
+        return []
+    bad = []
+    for raw in _MONEY_IN_TEXT.findall(answer or ""):
+        if _normalise_figure(raw) not in allowed:
+            bad.append(raw.strip())
+    # Preserve order, drop duplicates.
+    return list(dict.fromkeys(bad))
 
 
 @dataclass
@@ -114,6 +182,10 @@ class Turn:
     agent_results: list[dict] = field(default_factory=list)
     tool_calls: list[str] = field(default_factory=list)
     error: str | None = None
+    unverified_figures: list[str] = field(default_factory=list)
+    # Raw tool output collected during the turn. Used to verify the answer's
+    # figures and to build charts; never sent back to a model.
+    raw_data: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -122,7 +194,51 @@ class Turn:
             "agents": self.agent_results,
             "tool_calls": self.tool_calls,
             "error": self.error,
+            "unverified_figures": self.unverified_figures,
+            "charts": self.charts,
         }
+
+    @property
+    def charts(self) -> list[dict]:
+        """Breakdowns worth drawing, taken from what the tools returned.
+
+        The agents answer in prose, but the breakdowns underneath are already
+        structured — so the UI can plot the real numbers instead of asking a
+        model to describe a distribution in words. Charting the tool output
+        rather than the prose also means a chart cannot disagree with the
+        data, however the answer is worded.
+        """
+        found: list[dict] = []
+        seen: set[str] = set()
+
+        def walk(node) -> None:
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    if key.startswith("by_") and isinstance(value, list) and value:
+                        field_name = key[3:]
+                        rows = [
+                            {
+                                "label": str(r.get(field_name) or "(not recorded)"),
+                                "value": r.get("sum") or 0,
+                                "display": r.get("sum_display") or "",
+                                "count": r.get("count", 0),
+                            }
+                            for r in value
+                            if isinstance(r, dict)
+                        ]
+                        rows = [r for r in rows if r["value"] or r["count"]]
+                        title = field_name.replace("_", " ")
+                        if len(rows) >= 2 and title not in seen:
+                            seen.add(title)
+                            found.append({"title": title, "rows": rows[:8]})
+                    else:
+                        walk(value)
+            elif isinstance(node, list):
+                for v in node:
+                    walk(v)
+
+        walk(self.raw_data)
+        return found[:2]
 
 
 class Orchestrator:
@@ -133,6 +249,9 @@ class Orchestrator:
         self.client = client or llm.get_client()
         self.boards: dict[str, BoardData] | None = None
         self.history: list[dict] = []
+        # Raw tool output for the turn in flight — used to verify the figures
+        # in the answer and to build charts. Never sent back to the model.
+        self._turn_raw: list[dict] = []
 
     # -- data ------------------------------------------------------------
 
@@ -164,25 +283,48 @@ class Orchestrator:
         boards = await self.ensure_loaded()
 
         async def one(tool_id: str, name: str, args: dict):
-            if name == "analyze_deals":
-                agent = AG.build_deals_agent(boards["deals"], self.client)
-                return tool_id, (await agent.run(args["question"])).to_dict()
-            if name == "analyze_work_orders":
-                agent = AG.build_work_orders_agent(boards["work_orders"], self.client)
-                return tool_id, (await agent.run(args["question"])).to_dict()
+            """Returns (id, payload_for_model, raw_data_for_us)."""
+            if name in ("analyze_deals", "analyze_work_orders"):
+                board = boards["deals" if name == "analyze_deals" else "work_orders"]
+                build = (
+                    AG.build_deals_agent if name == "analyze_deals"
+                    else AG.build_work_orders_agent
+                )
+                result = await build(board, self.client).run(args["question"])
+                return tool_id, result.to_dict(), result.raw_outputs
             if name == "compare_boards":
                 try:
-                    return tool_id, A.cross_board_view(
+                    view = A.cross_board_view(
                         boards["deals"].records,
                         boards["work_orders"].records,
                         by=args.get("by", "owner"),
                     )
+                    return tool_id, view, [view]
                 except A.UnsafeJoinError as exc:
-                    return tool_id, {"error": str(exc)}
-            return tool_id, {"error": f"unknown tool '{name}'"}
+                    return tool_id, {"error": str(exc)}, []
+            return tool_id, {"error": f"unknown tool '{name}'"}, []
 
         done = await asyncio.gather(*(one(i, n, a) for i, n, a in calls))
-        return dict(done)
+        self._turn_raw.extend(r for _, _, raws in done for r in raws)
+        return {tid: payload for tid, payload, _ in done}
+
+    def _verify_figures(self, answer: str, turn: "Turn") -> str:
+        """Flag any rupee figure the tools did not actually produce."""
+        allowed: set[str] = set()
+        for payload in self._turn_raw + turn.agent_results:
+            allowed |= collect_figures(payload)
+
+        bad = unsupported_figures(answer, allowed)
+        if not bad:
+            return answer
+
+        turn.unverified_figures = bad
+        listed = ", ".join(bad[:4])
+        return (
+            f"{answer}\n\n> ⚠️ **Unverified figure(s): {listed}.** These do not "
+            f"match any value computed from the boards, so treat them as "
+            f"suspect and ask again rather than quoting them."
+        )
 
     # -- main loop -------------------------------------------------------
 
@@ -199,6 +341,7 @@ class Orchestrator:
         progress the UI is a blank box and the user assumes it has hung.
         """
         turn = Turn(question=question)
+        self._turn_raw = []
 
         async def emit(kind: str, detail: str) -> None:
             if on_event:
@@ -249,7 +392,7 @@ class Orchestrator:
 
             if not response.wants_tools:
                 if response.text:
-                    turn.answer = response.text
+                    turn.answer = self._verify_figures(response.text, turn)
                     self.history = list(messages)
                     return turn
                 # A turn with neither tool calls nor text is a dead end. Say so
@@ -279,6 +422,7 @@ class Orchestrator:
             )
 
             outputs = await self.fan_out(calls)
+            turn.raw_data = list(self._turn_raw)
             await emit("status", "Combining findings")
 
             for call in response.tool_calls:

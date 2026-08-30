@@ -136,13 +136,17 @@ class AgentResult:
     tool_calls: list[dict] = field(default_factory=list)
     caveats: list[dict] = field(default_factory=list)
     error: str | None = None
+    # Raw tool output, kept for the orchestrator to verify figures against and
+    # for the UI to chart. Deliberately NOT part of to_dict(): the orchestrator
+    # model reads the prose, and re-sending the underlying tables would double
+    # the token cost of every turn for no gain.
+    raw_outputs: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
             "agent": self.agent,
             "findings": self.findings,
             "tools_used": [c["name"] for c in self.tool_calls],
-            "board_caveats": self.caveats,
             "error": self.error,
         }
 
@@ -166,18 +170,20 @@ class DomainAgent:
         self.board = board
         self.client = client
 
-    def _fail(self, calls: list[dict], error: str) -> AgentResult:
+    def _fail(self, calls: list[dict], error: str, raw: list[dict] | None = None) -> AgentResult:
         return AgentResult(
             agent=self.name,
             findings="",
             tool_calls=calls,
             caveats=self.board.caveats,
             error=error,
+            raw_outputs=raw or [],
         )
 
     async def run(self, question: str) -> AgentResult:
         messages: list[dict] = [llm.user(question)]
         calls: list[dict] = []
+        raw: list[dict] = []
 
         for _ in range(MAX_TOOL_ROUNDS):
             try:
@@ -200,12 +206,14 @@ class DomainAgent:
                     findings=response.text,
                     tool_calls=calls,
                     caveats=self.board.caveats,
+                    raw_outputs=raw,
                 )
 
             for call in response.tool_calls:
                 calls.append({"name": call.name, "args": call.args})
                 try:
                     output = self.dispatch(call.name, call.args, self.board)
+                    raw.append(output)
                     content = json.dumps(output, default=str)
                 except Exception as exc:
                     # Hand the error back as a tool result rather than

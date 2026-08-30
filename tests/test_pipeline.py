@@ -366,6 +366,54 @@ def test_tool_payloads_stay_within_a_token_metered_budget(boards):
         assert chars < 5000, f"{name} payload is {chars} chars (~{chars // 4} tokens)"
 
 
+def test_figures_not_produced_by_a_tool_are_caught():
+    """A live leadership update rendered ₹73.25 Cr as ₹93.25 Cr.
+
+    One transposed digit moved the headline by ₹20 crore. Prompt rules alone
+    did not prevent it, so the answer is checked against what the tools
+    actually computed.
+    """
+    import orchestrator as O
+
+    allowed = O.collect_figures({
+        "value": {"sum_display": "₹73.25 Cr", "median_display": "₹23.49 L"},
+        "rows": [{"sum_display": "₹3.63 Cr"}],
+    })
+
+    assert O.unsupported_figures("Pipeline is ₹73.25 Cr, cash ₹3.63 Cr.", allowed) == []
+    # Whitespace and comma differences must not read as a mismatch.
+    assert O.unsupported_figures("Pipeline is ₹ 73.25 Cr.", allowed) == []
+    assert O.unsupported_figures("Pipeline is ₹93.25 Cr.", allowed) == ["₹93.25 Cr"]
+
+    # With nothing to check against, stay silent rather than flag everything.
+    assert O.unsupported_figures("₹93.25 Cr", set()) == []
+
+
+def test_charts_are_built_from_tool_output_not_prose(boards):
+    """A chart drawn from the data cannot disagree with the data."""
+    import tools as T
+    from orchestrator import Turn
+
+    out = T.run_deals_tool("deals_query", {"stage_groups": ["open"]}, boards["deals"])
+    turn = Turn(question="x", raw_data=[out])
+    charts = turn.charts
+
+    assert charts, "expected breakdowns to be chartable"
+    titles = {c["title"] for c in charts}
+    assert titles & {"stage", "sector", "owner"}
+    for c in charts:
+        assert len(c["rows"]) >= 2
+        assert all(r["display"].startswith("₹") for r in c["rows"] if r["value"])
+
+
+def test_single_group_breakdowns_are_not_charted(boards):
+    """A one-bar chart is noise, not information."""
+    from orchestrator import Turn
+
+    turn = Turn(question="x", raw_data=[{"by_sector": [{"sector": "Mining", "sum": 10, "count": 1}]}])
+    assert turn.charts == []
+
+
 def test_compact_rounds_floats_and_drops_empties():
     import tools as T
 
