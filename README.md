@@ -93,22 +93,70 @@ GROQ_API_KEY=gsk_...
 Switching providers is an env var, never a code change — `llm.py` translates
 the neutral conversation and tool schemas to each provider's wire format.
 
-### Connecting the real monday.com boards
+## monday.com setup
 
-The deployed app authenticates to monday.com **itself** — it cannot use an
-MCP connection from your editor, because it runs as a separate process on a
-separate host. Set:
+### 1. Get an API token
+
+monday.com → avatar (bottom-left) → **Developers** → **My Access Tokens** →
+**Show**. Or go direct to
+`https://<your-account>.monday.com/apps/manage/tokens`. Put it in `.env`:
 
 ```bash
-MONDAY_API_TOKEN=...              # monday.com → avatar → Developers → My access tokens
+MONDAY_API_TOKEN=eyJhbGciOi...
+```
+
+### 2. Provision the boards
+
+```bash
+python scripts/import_to_monday.py --dry-run   # check the column plan
+python scripts/import_to_monday.py             # create + load (~16 min)
+```
+
+This creates **Deal Funnel** (346 items, 11 columns) and **Work Order
+Tracker** (176 items, 33 columns), typed appropriately — `status` for
+categoricals, `date` for dates, `numbers` for money, `text` for codes and
+mixed-unit quantities.
+
+It prints the two board ids when it finishes. Paste them into `.env` and flip
+the backend:
+
+```bash
 MONDAY_DEALS_BOARD_ID=...
 MONDAY_WORK_ORDERS_BOARD_ID=...
 USE_MOCK_DATA=false
 ```
 
-`MondayBackend` emits rows keyed by **column title**, so as long as the
-imported columns keep the titles in `data_source.py`, nothing downstream
-changes. Import the two workbooks from `data/` as-is: do not pre-clean them.
+Three things worth knowing about the importer:
+
+- **It does not clean anything.** The embedded header rows, the missing
+  values, the original spellings and the mixed-unit quantity strings all
+  survive the round trip — coping with them is what the agent is for. Only
+  dates and numerics are interpreted, because a typed monday column requires
+  it; anything unparseable is written empty rather than coerced, so "missing"
+  and "malformed" stay distinguishable.
+- **It is safe to re-run.** It deletes any board already using a target name
+  first, so a part-finished run cannot leave a duplicate beside the real one.
+- **It paces itself against monday's rate limit.** monday meters by
+  *complexity*: 1,000,000 units per rolling 60s, and a `create_item` costs
+  30,000 — a hard ceiling of ~33 items/min regardless of batching. The script
+  reads the remaining budget from the `ratelimit` response header and waits
+  only when the next batch would not fit. Expect ~16 minutes.
+
+If you would rather import through monday's UI instead: **delete row 1 of the
+work-order workbook first.** Its real header is on row 2, and monday's
+importer will otherwise treat the blank first row as your column names.
+
+### 3. Note on MCP vs API
+
+The brief allows either. This uses the **GraphQL API**, because the deployed
+service runs as its own process on its own host — it cannot borrow an MCP
+connection configured in someone's editor. A token in the host's environment
+is the only thing that works once this is not running on your laptop.
+
+`MondayBackend` emits rows keyed by **column title**, which is why the
+importer preserves the source headers verbatim: it lets the file backend and
+the monday backend share one normalizer, and makes swapping between them a
+config change rather than a code change.
 
 ---
 
