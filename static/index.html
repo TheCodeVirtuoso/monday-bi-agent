@@ -6,127 +6,236 @@
 <title>BI Agent</title>
 <style>
   :root {
-    --bg: #f7f7f5;
+    --bg: #faf9f7;
     --panel: #ffffff;
-    --ink: #1c1c1a;
-    --muted: #6b6b66;
-    --line: #e2e2dd;
+    --ink: #1a1a18;
+    --ink-soft: #55554f;
+    --muted: #8a8a82;
+    --line: #e6e4de;
+    --line-soft: #f0eeea;
     --accent: #b45309;
-    --user-bg: #1c1c1a;
-    --user-ink: #f7f7f5;
-    --code-bg: #f0efec;
+    --accent-soft: #fdf3e7;
+    --user-bg: #1f1f1d;
+    --user-ink: #faf9f7;
+    --code-bg: #f4f2ee;
+    --ok: #2f9e44;
+    --bad: #c92a2a;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.04);
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #16161a;
-      --panel: #1e1e23;
-      --ink: #ececea;
-      --muted: #9a9a94;
-      --line: #2e2e35;
+      --bg: #141416;
+      --panel: #1c1c20;
+      --ink: #eceae6;
+      --ink-soft: #b5b3ad;
+      --muted: #85837d;
+      --line: #2c2c32;
+      --line-soft: #232329;
       --accent: #f0a868;
-      --user-bg: #ececea;
-      --user-ink: #16161a;
+      --accent-soft: #2a2118;
+      --user-bg: #eceae6;
+      --user-ink: #141416;
       --code-bg: #26262c;
+      --ok: #51cf66;
+      --bad: #ff6b6b;
+      --shadow: 0 1px 2px rgba(0,0,0,.2), 0 8px 24px rgba(0,0,0,.25);
     }
   }
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
-    font: 15px/1.6 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
-    display: flex; flex-direction: column; height: 100vh;
+    font: 15px/1.65 ui-sans-serif, -apple-system, "Segoe UI", Roboto, system-ui, sans-serif;
+    display: flex; flex-direction: column;
+    -webkit-font-smoothing: antialiased;
   }
+
+  /* ---------- header ---------- */
   header {
-    padding: 14px 20px; border-bottom: 1px solid var(--line);
-    background: var(--panel); display: flex; align-items: baseline; gap: 12px;
-    flex-wrap: wrap;
+    padding: 12px 20px; border-bottom: 1px solid var(--line);
+    background: var(--panel); display: flex; align-items: center; gap: 10px;
+    flex-wrap: wrap; position: sticky; top: 0; z-index: 10;
   }
-  header h1 { font-size: 15px; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
-  header .sub { color: var(--muted); font-size: 13px; }
-  header .status { margin-left: auto; font-size: 12px; color: var(--muted); }
-  header .dot {
-    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
-    background: var(--muted); margin-right: 5px; vertical-align: middle;
+  .brand { font-size: 14.5px; font-weight: 650; letter-spacing: -.01em; }
+  .brand span { color: var(--muted); font-weight: 400; margin-left: 6px; }
+  .status {
+    margin-left: auto; font-size: 12px; color: var(--muted);
+    display: flex; align-items: center; gap: 6px;
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  header .dot.ok { background: #2f9e44; }
-  header .dot.bad { background: #c92a2a; }
+  .dot {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none;
+  }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent); }
+  .dot.bad { background: var(--bad); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 18%, transparent); }
+  .dot.wait { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
 
-  #log { flex: 1; overflow-y: auto; padding: 22px 20px; }
-  .wrap { max-width: 760px; margin: 0 auto; }
+  /* ---------- log ---------- */
+  #log { flex: 1; overflow-y: auto; padding: 26px 20px 8px; scroll-behavior: smooth; }
+  .wrap { max-width: 780px; margin: 0 auto; }
 
-  .msg { margin-bottom: 20px; display: flex; }
+  .msg { margin-bottom: 22px; display: flex; animation: rise .28s cubic-bezier(.2,.7,.3,1) both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: none } }
   .msg.user { justify-content: flex-end; }
   .bubble {
-    max-width: 88%; padding: 11px 15px; border-radius: 14px;
-    border: 1px solid var(--line); background: var(--panel);
+    max-width: 86%; padding: 12px 16px; border-radius: 16px;
+    border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow);
+    position: relative;
   }
   .msg.user .bubble {
-    background: var(--user-bg); color: var(--user-ink); border-color: transparent;
+    background: var(--user-bg); color: var(--user-ink);
+    border-color: transparent; box-shadow: none; border-radius: 16px 16px 4px 16px;
   }
-  .bubble :first-child { margin-top: 0; }
-  .bubble :last-child { margin-bottom: 0; }
-  .bubble h3 { font-size: 14px; margin: 14px 0 6px; }
-  .bubble ul, .bubble ol { padding-left: 20px; margin: 8px 0; }
-  .bubble li { margin: 3px 0; }
+  .msg.agent .bubble { border-radius: 16px 16px 16px 4px; }
+
+  .bubble > :first-child { margin-top: 0 }
+  .bubble > :last-child { margin-bottom: 0 }
+  .bubble p { margin: 0 0 10px }
+  .bubble h3 {
+    font-size: 13px; margin: 18px 0 8px; letter-spacing: .04em;
+    text-transform: uppercase; color: var(--muted); font-weight: 650;
+  }
+  .bubble ul, .bubble ol { padding-left: 20px; margin: 8px 0 }
+  .bubble li { margin: 4px 0 }
+  .bubble strong { font-weight: 640 }
   .bubble code {
-    background: var(--code-bg); padding: 1px 5px; border-radius: 4px;
-    font: 13px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
+    background: var(--code-bg); padding: 1.5px 5px; border-radius: 5px;
+    font: 12.5px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
   }
-  .bubble table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 13px; }
-  .bubble th, .bubble td { border: 1px solid var(--line); padding: 5px 8px; text-align: left; }
-  .bubble th { background: var(--code-bg); font-weight: 600; }
-
-  .meta { font-size: 11.5px; color: var(--muted); margin-top: 8px; }
-  .progress { color: var(--muted); font-size: 13.5px; display: flex; align-items: center; gap: 8px; }
-  .spinner {
-    width: 11px; height: 11px; border: 2px solid var(--line);
-    border-top-color: var(--accent); border-radius: 50%;
-    animation: spin 0.7s linear infinite; flex: none;
+  .bubble blockquote {
+    margin: 10px 0; padding: 8px 14px; border-left: 3px solid var(--accent);
+    background: var(--accent-soft); border-radius: 0 8px 8px 0; color: var(--ink-soft);
   }
-  @keyframes spin { to { transform: rotate(360deg); } }
+  .bubble hr { border: 0; border-top: 1px solid var(--line); margin: 16px 0 }
 
-  .examples { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
+  /* tables — the agent emits these constantly */
+  .tablewrap { overflow-x: auto; margin: 12px 0; border: 1px solid var(--line); border-radius: 10px }
+  .bubble table { border-collapse: collapse; width: 100%; font-size: 13.5px }
+  .bubble th, .bubble td {
+    padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--line-soft);
+    white-space: nowrap;
+  }
+  .bubble thead th {
+    background: var(--code-bg); font-weight: 620; font-size: 12px;
+    letter-spacing: .03em; text-transform: uppercase; color: var(--muted);
+  }
+  .bubble tbody tr:last-child td { border-bottom: 0 }
+  .bubble td.num, .bubble th.num { text-align: right; font-variant-numeric: tabular-nums }
+
+  /* ---------- progress ---------- */
+  .steps { display: flex; flex-direction: column; gap: 7px; }
+  .step {
+    display: flex; align-items: center; gap: 9px; font-size: 13.5px;
+    color: var(--muted); animation: rise .25s ease both;
+  }
+  .step .tick { width: 14px; height: 14px; flex: none; position: relative }
+  .step.done .tick::after {
+    content: ''; position: absolute; inset: 0;
+    background: var(--ok); border-radius: 50%;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6.5 11.2 3.8 8.5l1-1 1.7 1.7 4.7-4.7 1 1z'/%3E%3C/svg%3E") center/contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6.5 11.2 3.8 8.5l1-1 1.7 1.7 4.7-4.7 1 1z'/%3E%3C/svg%3E") center/contain no-repeat;
+  }
+  .step.active .tick::after {
+    content: ''; position: absolute; inset: 1px;
+    border: 2px solid var(--line); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin .7s linear infinite;
+  }
+  .step.active { color: var(--ink-soft) }
+  @keyframes spin { to { transform: rotate(360deg) } }
+
+  .shimmer {
+    height: 11px; border-radius: 6px; margin-top: 12px;
+    background: linear-gradient(90deg, var(--line-soft) 25%, var(--line) 37%, var(--line-soft) 63%);
+    background-size: 400% 100%; animation: shim 1.3s ease infinite;
+  }
+  .shimmer.w80 { width: 80% } .shimmer.w60 { width: 60% }
+  @keyframes shim { 0% { background-position: 100% 0 } 100% { background-position: 0 0 } }
+
+  /* ---------- meta / actions ---------- */
+  .meta {
+    font-size: 11.5px; color: var(--muted); margin-top: 12px;
+    padding-top: 9px; border-top: 1px solid var(--line-soft);
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  .pill {
+    background: var(--code-bg); padding: 2px 8px; border-radius: 999px;
+    font: 11px ui-monospace, Consolas, monospace;
+  }
+  .copy {
+    margin-left: auto; font: inherit; font-size: 11.5px; cursor: pointer;
+    background: none; border: 1px solid var(--line); color: var(--muted);
+    padding: 3px 10px; border-radius: 999px; transition: .15s;
+  }
+  .copy:hover { border-color: var(--accent); color: var(--accent) }
+  .copy.done { border-color: var(--ok); color: var(--ok) }
+
+  /* ---------- greeting ---------- */
+  .examples { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px }
   .examples button {
-    font: inherit; font-size: 12.5px; padding: 6px 11px; cursor: pointer;
-    background: var(--panel); color: var(--ink);
-    border: 1px solid var(--line); border-radius: 999px;
+    font: inherit; font-size: 12.5px; padding: 7px 13px; cursor: pointer;
+    background: var(--panel); color: var(--ink-soft);
+    border: 1px solid var(--line); border-radius: 999px; transition: .15s;
   }
-  .examples button:hover { border-color: var(--accent); color: var(--accent); }
+  .examples button:hover {
+    border-color: var(--accent); color: var(--accent);
+    background: var(--accent-soft); transform: translateY(-1px);
+  }
 
-  footer { border-top: 1px solid var(--line); background: var(--panel); padding: 12px 20px; }
-  form { max-width: 760px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
+  /* ---------- composer ---------- */
+  footer { border-top: 1px solid var(--line); background: var(--panel); padding: 12px 20px 16px }
+  form { max-width: 780px; margin: 0 auto; display: flex; gap: 9px; align-items: flex-end }
+  .field { flex: 1; display: flex; flex-direction: column; gap: 7px }
   textarea {
-    flex: 1; resize: none; font: inherit; padding: 10px 12px; border-radius: 10px;
+    resize: none; font: inherit; padding: 11px 14px; border-radius: 12px;
     border: 1px solid var(--line); background: var(--bg); color: var(--ink);
-    max-height: 140px;
+    max-height: 150px; transition: border-color .15s;
   }
-  textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  textarea:focus { outline: none; border-color: var(--accent) }
   button.send {
-    font: inherit; font-weight: 600; padding: 10px 16px; border-radius: 10px;
+    font: inherit; font-weight: 600; padding: 11px 20px; border-radius: 12px;
     border: none; background: var(--accent); color: #fff; cursor: pointer;
+    transition: .15s; white-space: nowrap;
   }
-  button.send:disabled { opacity: 0.45; cursor: default; }
-  .toggle { font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 5px; padding-bottom: 10px; }
+  button.send:hover:not(:disabled) { filter: brightness(1.08) }
+  button.send:disabled { opacity: .4; cursor: default }
+  .toggle {
+    font-size: 12.5px; color: var(--muted); display: flex; align-items: center;
+    gap: 6px; cursor: pointer; user-select: none;
+  }
+  .toggle input { accent-color: var(--accent); cursor: pointer }
+
+  @media (max-width: 640px) {
+    .bubble { max-width: 94% }
+    #log { padding: 18px 14px 4px }
+    header, footer { padding-left: 14px; padding-right: 14px }
+  }
 </style>
 </head>
 <body>
 <header>
-  <h1>BI Agent</h1>
-  <span class="sub">deals &amp; work orders</span>
-  <span class="status" id="status"><span class="dot" id="dot"></span><span id="statusText">checking…</span></span>
+  <span class="brand">BI Agent<span>deals &amp; work orders</span></span>
+  <span class="status"><span class="dot wait" id="dot"></span><span id="statusText">checking…</span></span>
 </header>
 
 <div id="log"><div class="wrap" id="logInner"></div></div>
 
 <footer>
   <form id="form">
-    <label class="toggle"><input type="checkbox" id="leadership"> leadership update</label>
-    <textarea id="input" rows="1" placeholder="Ask about pipeline, delivery, or cash…" autofocus></textarea>
+    <div class="field">
+      <label class="toggle">
+        <input type="checkbox" id="leadership">
+        leadership update — formatted to paste into Slack or email
+      </label>
+      <textarea id="input" rows="1" placeholder="Ask about pipeline, delivery, or cash…" autofocus></textarea>
+    </div>
     <button class="send" id="send" type="submit">Ask</button>
   </form>
 </footer>
 
 <script>
 const logInner = document.getElementById('logInner');
+const logEl = document.getElementById('log');
 const form = document.getElementById('form');
 const input = document.getElementById('input');
 const send = document.getElementById('send');
@@ -134,12 +243,12 @@ const leadership = document.getElementById('leadership');
 const sessionId = 's-' + Math.random().toString(36).slice(2);
 
 const EXAMPLES = [
-  "How's our pipeline looking this quarter?",
+  "How's our pipeline looking?",
   "What's stuck in delivery right now?",
   "How much cash is outstanding, and who owes the most?",
   "How are we doing in energy?",
   "Which owner has the strongest pipeline?",
-  "Give me a leadership update."
+  "Match each deal to its work order"
 ];
 
 function el(tag, cls, html) {
@@ -149,59 +258,157 @@ function el(tag, cls, html) {
   return n;
 }
 
-// Minimal markdown: enough for the agent's output, no library needed.
+/* ---------------------------------------------------------------
+   Markdown. Deliberately hand-rolled rather than pulling a library:
+   the agent emits a narrow, known subset, and tables are the part
+   that actually matters — answers are full of them, and without
+   table support they render as a wall of pipe characters.
+   --------------------------------------------------------------- */
+const esc = s => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+const inline = s => s
+  .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+  .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+  .replace(/`([^`]+)`/g, '<code>$1</code>')
+  .replace(/&lt;sub&gt;(.*?)&lt;\/sub&gt;/g, '<small>$1</small>');
+
+// Right-align cells that are numbers, money or percentages.
+const isNumeric = s => /^[-+]?[₹$€£]?\s*[\d,.]+\s*(Cr|L|%|k|M)?$/i.test(s.trim());
+
 function md(src) {
-  const esc = s => s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-  const lines = esc(src).split('\n');
-  let out = '', inList = false;
-  const inline = s => s
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>');
-  for (let line of lines) {
-    if (/^\s*[-*]\s+/.test(line)) {
-      if (!inList) { out += '<ul>'; inList = true; }
-      out += '<li>' + inline(line.replace(/^\s*[-*]\s+/, '')) + '</li>';
+  const lines = esc(src || '').split('\n');
+  let out = '', list = null, i = 0;
+
+  const closeList = () => { if (list) { out += `</${list}>`; list = null; } };
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // --- table ---
+    if (/^\s*\|.*\|\s*$/.test(line) && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1] || '')) {
+      closeList();
+      const cells = r => r.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+      const head = cells(line);
+      i += 2;
+      const body = [];
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) body.push(cells(lines[i++]));
+
+      // Decide alignment per column from the body, not the header.
+      const numeric = head.map((_, c) =>
+        body.length && body.every(r => !r[c] || isNumeric(r[c])));
+
+      out += '<div class="tablewrap"><table><thead><tr>' +
+        head.map((h, c) => `<th class="${numeric[c] ? 'num' : ''}">${inline(h)}</th>`).join('') +
+        '</tr></thead><tbody>' +
+        body.map(r => '<tr>' + head.map((_, c) =>
+          `<td class="${numeric[c] ? 'num' : ''}">${inline(r[c] || '')}</td>`).join('') + '</tr>').join('') +
+        '</tbody></table></div>';
       continue;
     }
-    if (inList) { out += '</ul>'; inList = false; }
-    if (/^###\s+/.test(line)) out += '<h3>' + inline(line.replace(/^###\s+/, '')) + '</h3>';
-    else if (/^##\s+/.test(line)) out += '<h3>' + inline(line.replace(/^##\s+/, '')) + '</h3>';
-    else if (line.trim() === '') out += '';
-    else out += '<p>' + inline(line) + '</p>';
+
+    // --- horizontal rule ---
+    if (/^\s*([-*_])\1{2,}\s*$/.test(line)) { closeList(); out += '<hr>'; i++; continue; }
+
+    // --- blockquote ---
+    if (/^\s*&gt;\s?/.test(line)) {
+      closeList();
+      const buf = [];
+      while (i < lines.length && /^\s*&gt;\s?/.test(lines[i])) buf.push(lines[i++].replace(/^\s*&gt;\s?/, ''));
+      out += `<blockquote>${inline(buf.join(' '))}</blockquote>`;
+      continue;
+    }
+
+    // --- lists ---
+    const ul = line.match(/^\s*[-*•]\s+(.*)$/);
+    const ol = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    if (ul || ol) {
+      const want = ul ? 'ul' : 'ol';
+      if (list !== want) { closeList(); out += `<${want}>`; list = want; }
+      out += `<li>${inline((ul || ol)[1])}</li>`;
+      i++; continue;
+    }
+    closeList();
+
+    // --- headings ---
+    const h = line.match(/^\s*(#{1,6})\s+(.*)$/);
+    if (h) { out += `<h3>${inline(h[2])}</h3>`; i++; continue; }
+
+    if (line.trim() === '') { i++; continue; }
+    out += `<p>${inline(line)}</p>`;
+    i++;
   }
-  if (inList) out += '</ul>';
+  closeList();
   return out;
+}
+
+/* ---------------- messages ---------------- */
+
+function nearBottom() {
+  return logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 140;
+}
+function scroll(force) {
+  if (force || nearBottom()) logEl.scrollTop = logEl.scrollHeight;
 }
 
 function addUser(text) {
   const m = el('div', 'msg user');
   m.appendChild(el('div', 'bubble', md(text)));
   logInner.appendChild(m);
-  scroll();
+  scroll(true);
 }
 
 function addAgent() {
   const m = el('div', 'msg agent');
   const b = el('div', 'bubble');
-  b.innerHTML = '<div class="progress"><span class="spinner"></span><span class="ptext">Starting…</span></div>';
+  b.innerHTML =
+    '<div class="steps"></div>' +
+    '<div class="shimmer"></div><div class="shimmer w80"></div><div class="shimmer w60"></div>';
   m.appendChild(b);
   logInner.appendChild(m);
-  scroll();
+  scroll(true);
   return b;
 }
 
-function scroll() {
-  const log = document.getElementById('log');
-  log.scrollTop = log.scrollHeight;
+// Progress arrives as discrete steps; keep the finished ones visible with a
+// tick so the reader can see what the agent actually did, rather than one
+// line of text that keeps being overwritten.
+function setSteps(bubble, steps) {
+  const holder = bubble.querySelector('.steps');
+  if (!holder) return;
+  holder.innerHTML = steps.map((s, i) =>
+    `<div class="step ${i === steps.length - 1 ? 'active' : 'done'}">
+       <span class="tick"></span><span>${esc(s)}</span>
+     </div>`).join('');
+  scroll();
+}
+
+function finish(bubble, answer, tools) {
+  bubble.innerHTML = md(answer || '_No answer was produced._');
+
+  const meta = el('div', 'meta');
+  if (tools && tools.length) {
+    meta.appendChild(el('span', null, 'via'));
+    tools.forEach(t => meta.appendChild(el('span', 'pill', esc(t))));
+  }
+  const copy = el('button', 'copy', 'Copy');
+  copy.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(answer);
+      copy.textContent = 'Copied'; copy.classList.add('done');
+      setTimeout(() => { copy.textContent = 'Copy'; copy.classList.remove('done'); }, 1600);
+    } catch { copy.textContent = 'Press Ctrl+C'; }
+  };
+  meta.appendChild(copy);
+  bubble.appendChild(meta);
+  scroll();
 }
 
 function greet() {
   const b = el('div', 'bubble');
   b.innerHTML = md(
-    "Ask me about the **deals pipeline**, **delivery status**, or **cash and receivables**.\n\n" +
-    "I read both boards, compute the numbers deterministically, and tell you what's missing " +
-    "from the data rather than quietly rounding over it."
+    "Ask about the **deals pipeline**, **delivery status**, or **cash and receivables**.\n\n" +
+    "I read both monday.com boards, compute every number in Python rather than guessing at it, " +
+    "and tell you what the data can't support instead of rounding over it."
   );
   const ex = el('div', 'examples');
   EXAMPLES.forEach(q => {
@@ -215,19 +422,19 @@ function greet() {
   logInner.appendChild(m);
 }
 
-async function health() {
+/* ---------------- health ---------------- */
+
+async function health(attempt = 0) {
   const dot = document.getElementById('dot');
   const txt = document.getElementById('statusText');
   try {
     const r = await fetch('/api/health');
-    // During a redeploy the host returns an HTML error page, not JSON.
-    // Calling .json() on it throws, and reporting that as "unreachable" is
-    // wrong and unhelpful — the server is there, it is restarting.
+    // A restarting host serves HTML, not JSON. Saying "unreachable" would be
+    // wrong — it is reachable, it is booting.
     if (!r.ok) {
-      dot.className = 'dot bad';
-      txt.textContent = `restarting (HTTP ${r.status}) — retrying`;
-      setTimeout(health, 5000);
-      return;
+      dot.className = 'dot wait';
+      txt.textContent = `starting up (HTTP ${r.status})…`;
+      return setTimeout(() => health(attempt + 1), 5000);
     }
     const j = await r.json();
     if (j.status === 'ok') {
@@ -241,35 +448,40 @@ async function health() {
       }
     } else {
       dot.className = 'dot bad';
-      txt.textContent = j.detail || j.status;
+      txt.textContent = (j.detail || j.status || '').slice(0, 90);
     }
   } catch (e) {
-    dot.className = 'dot bad';
-    txt.textContent = 'starting up — retrying';
-    setTimeout(health, 5000);
+    dot.className = 'dot wait';
+    txt.textContent = 'starting up…';
+    if (attempt < 40) setTimeout(() => health(attempt + 1), 5000);
   }
 }
+
+/* ---------------- submit ---------------- */
 
 form.onsubmit = async (e) => {
   e.preventDefault();
   const text = input.value.trim();
-  if (!text) return;
+  if (!text || send.disabled) return;
   input.value = '';
   input.style.height = 'auto';
   send.disabled = true;
   addUser(text);
   const bubble = addAgent();
+  const steps = ['Sending'];
+  setSteps(bubble, steps);
 
   try {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: text,
-        session_id: sessionId,
-        leadership: leadership.checked
-      })
+      body: JSON.stringify({ message: text, session_id: sessionId, leadership: leadership.checked })
     });
+
+    if (!res.ok) {
+      finish(bubble, `The server returned **HTTP ${res.status}**.\n\nIt may still be starting up — wait a moment and try again.`, []);
+      return;
+    }
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -284,22 +496,18 @@ form.onsubmit = async (e) => {
       for (const part of parts) {
         const line = part.trim();
         if (!line.startsWith('data:')) continue;
-        const ev = JSON.parse(line.slice(5).trim());
+        let ev;
+        try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
         if (ev.type === 'status') {
-          const p = bubble.querySelector('.ptext');
-          if (p) p.textContent = ev.detail + '…';
-          scroll();
+          steps.push(ev.detail);
+          setSteps(bubble, steps);
         } else if (ev.type === 'answer') {
-          bubble.innerHTML = md(ev.answer || '(no answer)');
-          if (ev.tool_calls && ev.tool_calls.length) {
-            bubble.appendChild(el('div', 'meta', 'via ' + ev.tool_calls.join(', ')));
-          }
-          scroll();
+          finish(bubble, ev.answer, ev.tool_calls);
         }
       }
     }
   } catch (err) {
-    bubble.innerHTML = md('Could not reach the server. Is it still running?\n\n`' + err + '`');
+    finish(bubble, `Could not reach the server.\n\n\`${err}\`\n\nIf this is a free-tier host it may be waking up — try again in a moment.`, []);
   } finally {
     send.disabled = false;
     input.focus();
@@ -308,7 +516,7 @@ form.onsubmit = async (e) => {
 
 input.addEventListener('input', () => {
   input.style.height = 'auto';
-  input.style.height = Math.min(input.scrollHeight, 140) + 'px';
+  input.style.height = Math.min(input.scrollHeight, 150) + 'px';
 });
 input.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); }

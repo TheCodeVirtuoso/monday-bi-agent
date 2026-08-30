@@ -248,8 +248,18 @@ class Orchestrator:
             messages.append(llm.assistant(response))
 
             if not response.wants_tools:
-                turn.answer = response.text
-                self.history = list(messages)
+                if response.text:
+                    turn.answer = response.text
+                    self.history = list(messages)
+                    return turn
+                # A turn with neither tool calls nor text is a dead end. Say so
+                # rather than handing the user a blank bubble; do not persist
+                # the empty turn into history either.
+                turn.error = "model returned an empty response"
+                turn.answer = (
+                    "The model came back without an answer for that one. "
+                    "Try rephrasing it, or ask for something more specific."
+                )
                 return turn
 
             calls = []

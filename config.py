@@ -45,6 +45,15 @@ GROQ_MODEL = env("GROQ_MODEL", "openai/gpt-oss-120b")
 OPENROUTER_MODEL = env("OPENROUTER_MODEL", "deepseek/deepseek-chat-v3-0324:free")
 ANTHROPIC_MODEL = env("ANTHROPIC_MODEL", "claude-opus-5")
 
+# Groq meters 200,000 tokens per day PER MODEL, so an exhausted model has
+# healthy siblings. Falling back to one recovers instantly, where waiting for
+# the daily window would not.
+GROQ_FALLBACK_MODELS = [
+    m.strip() for m in env(
+        "GROQ_FALLBACK_MODELS", "openai/gpt-oss-20b,qwen/qwen3.8-27b"
+    ).split(",") if m.strip()
+]
+
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
@@ -66,6 +75,7 @@ PROVIDERS = {
     "groq": {
         "api_key": GROQ_API_KEY,
         "model": GROQ_MODEL,
+        "fallback_models": GROQ_FALLBACK_MODELS,
         "base_url": GROQ_BASE_URL,
         "key_name": "GROQ_API_KEY",
         "openai_compatible": True,

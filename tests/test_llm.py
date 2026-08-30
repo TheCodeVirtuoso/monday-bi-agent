@@ -166,6 +166,58 @@ def test_provider_errors_become_actionable_messages(raw, expected_phrase):
     assert expected_phrase in llm._friendly_error(provider, Exception(raw))
 
 
+def test_daily_budget_error_is_distinguished_from_a_momentary_one():
+    """Two different limits, two different remedies.
+
+    A per-minute limit clears in seconds and is worth waiting for. A per-day
+    limit is per MODEL and takes minutes-to-hours, so the fix is to switch
+    models, not to sleep.
+    """
+    provider = {"name": "groq", "model": "openai/gpt-oss-120b", "key_name": "GROQ_API_KEY"}
+
+    per_day = Exception(
+        "Error code: 429 - Rate limit reached for model `openai/gpt-oss-120b` "
+        "on tokens per day (TPD): Limit 200000, Used 196084, Requested 4326. "
+        "Please try again in 2m57.12s. Need more tokens? Upgrade..."
+    )
+    msg = llm._friendly_error(provider, per_day)
+    assert "daily token budget" in msg
+    assert "GROQ_MODEL" in msg
+    assert "Used 196084" in msg, "the provider's own numbers are the useful part"
+    assert "Upgrade" not in msg, "the upsell is not actionable for the reader"
+
+    per_minute = Exception("Error code: 429 - Rate limit reached on tokens per minute")
+    assert "daily" not in llm._friendly_error(provider, per_minute)
+
+
+def test_fallback_models_are_configured_and_distinct():
+    """A model exhausted for the day has siblings with their own budgets."""
+    groq = config.PROVIDERS["groq"]
+    assert groq["fallback_models"]
+    assert groq["model"] not in groq["fallback_models"]
+
+
+@pytest.mark.parametrize(
+    "raw,seconds",
+    [
+        ("6.112s", 7.112),
+        ("1m26.4s", 87.4),
+        ("577ms", None),  # unparseable unit -> default
+    ],
+)
+def test_reset_delay_is_read_from_provider_headers(raw, seconds):
+    class FakeResponse:
+        headers = {"x-ratelimit-reset-tokens": raw}
+
+    exc = Exception("429")
+    exc.response = FakeResponse()
+    got = llm._reset_seconds(exc)
+    if seconds is None:
+        assert got == 12.0
+    else:
+        assert got == pytest.approx(seconds)
+
+
 def test_response_reports_whether_tools_were_requested():
     assert not llm.LLMResponse(text="hi").wants_tools
     assert llm.LLMResponse(

@@ -16,7 +16,9 @@ the maths.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -129,6 +131,7 @@ class OpenAICompatibleClient:
 
         self.provider = provider
         self.model = provider["model"]
+        self.fallback_models = provider.get("fallback_models") or []
         self.client = AsyncOpenAI(
             api_key=provider["api_key"],
             base_url=provider["base_url"],
@@ -171,6 +174,47 @@ class OpenAICompatibleClient:
                 out.append({"role": "user", "content": m["content"]})
         return out
 
+    async def _create_with_backoff(self, kwargs: dict):
+        """Call the provider, surviving a rate-limited model.
+
+        Groq's free tier meters two separate budgets: 8,000 tokens per minute
+        and 200,000 per day, and the daily one is per MODEL. So when the
+        primary model is exhausted a sibling usually still has headroom —
+        switching to it recovers instantly, where waiting would not.
+
+        A short wait is only worth it for the per-minute limit, which clears
+        in seconds. The daily limit reports ``x-should-retry: false`` and a
+        multi-minute delay; there is no point sleeping on that, so we fall
+        back or fail fast with a message that says which budget ran out.
+        """
+        models = [kwargs["model"]] + [
+            m for m in self.fallback_models if m != kwargs["model"]
+        ]
+        last: Exception | None = None
+
+        for model in models:
+            attempt_kwargs = {**kwargs, "model": model}
+            for attempt in range(2):
+                try:
+                    return await self.client.chat.completions.create(**attempt_kwargs)
+                except Exception as exc:
+                    text = str(exc)
+                    if not ("429" in text or "rate limit" in text.lower()):
+                        raise
+                    last = exc
+
+                    per_day = "per day" in text.lower() or "tpd" in text.lower()
+                    should_retry = str(
+                        _header(exc, "x-should-retry", "true")
+                    ).lower() != "false"
+
+                    if per_day or not should_retry or attempt == 1:
+                        break  # try the next model instead of waiting
+
+                    await asyncio.sleep(min(_reset_seconds(exc), 30))
+
+        raise last or LLMError("rate limited on every configured model")
+
     async def complete(
         self,
         system: str,
@@ -189,8 +233,18 @@ class OpenAICompatibleClient:
             kwargs["tools"] = _tools_openai(tools)
             kwargs["tool_choice"] = "auto"
 
+        # Reasoning models on Groq (the gpt-oss family, and Qwen3) return their
+        # thinking in a separate `reasoning` field and leave `content` null.
+        # Asking for it to be hidden puts the actual answer back in `content`,
+        # which is where every OpenAI-compatible client looks. Without this the
+        # final turn of a conversation can come back completely empty.
+        if self.provider["name"] == "groq":
+            kwargs["extra_body"] = {"reasoning_format": "hidden"}
+
         try:
-            resp = await self.client.chat.completions.create(**kwargs)
+            resp = await self._create_with_backoff(kwargs)
+        except LLMError:
+            raise
         except Exception as exc:
             raise LLMError(_friendly_error(self.provider, exc)) from exc
 
@@ -212,7 +266,18 @@ class OpenAICompatibleClient:
                 args = {}
             calls.append(ToolCall(id=tc.id, name=tc.function.name, args=args))
 
-        return LLMResponse(text=(msg.content or "").strip(), tool_calls=calls)
+        # Belt and braces: if a provider still withholds `content` and puts the
+        # text in a reasoning field, use that rather than returning nothing.
+        text = (msg.content or "").strip()
+        if not text and not calls:
+            extra = getattr(msg, "model_extra", None) or {}
+            for key in ("reasoning", "reasoning_content"):
+                fallback = getattr(msg, key, None) or extra.get(key)
+                if fallback:
+                    text = str(fallback).strip()
+                    break
+
+        return LLMResponse(text=text, tool_calls=calls)
 
 
 # --------------------------------------------------------------------------
@@ -321,6 +386,29 @@ class AnthropicClient:
 # --------------------------------------------------------------------------
 
 
+def _header(exc: Exception, name: str, default: str = "") -> str:
+    headers = getattr(getattr(exc, "response", None), "headers", None) or {}
+    return headers.get(name, default)
+
+
+def _reset_seconds(exc: Exception, default: float = 12.0) -> float:
+    """How long the provider says to wait, from its rate-limit headers.
+
+    Groq reports ``x-ratelimit-reset-tokens: 6.112s`` (also ``1m26.4s``).
+    Falls back to a fixed pause when no usable header is present.
+    """
+    headers = getattr(getattr(exc, "response", None), "headers", None) or {}
+    for name in ("retry-after", "x-ratelimit-reset-tokens", "x-ratelimit-reset-requests"):
+        raw = headers.get(name)
+        if not raw:
+            continue
+        m = re.fullmatch(r"(?:(\d+)m)?([\d.]+)s?", str(raw).strip())
+        if m:
+            minutes = float(m.group(1) or 0)
+            return minutes * 60 + float(m.group(2)) + 1
+    return default
+
+
 def _friendly_error(provider: dict, exc: Exception) -> str:
     """Turn a provider exception into something worth showing a user."""
     name = provider["name"]
@@ -330,9 +418,22 @@ def _friendly_error(provider: dict, exc: Exception) -> str:
     if "401" in text or "unauthorized" in lowered or "invalid api key" in lowered:
         return f"{name} rejected the API key. Check {provider['key_name']} in your .env."
     if "429" in text or "rate limit" in lowered:
+        # Groq's own message names the budget (per-minute vs per-day), the
+        # numbers, and how long to wait. That is far more actionable than
+        # anything paraphrased, so quote it.
+        detail = ""
+        match = re.search(r"Rate limit reached[^\"']*", text)
+        if match:
+            detail = " " + match.group(0).split("Need more tokens?")[0].strip()
+        if "per day" in lowered or "tpd" in lowered:
+            return (
+                f"{name}'s daily token budget for this model is used up."
+                f"{detail} Each model has its own daily allowance, so set "
+                f"GROQ_MODEL to another one (or wait for the window to roll)."
+            )
         return (
-            f"{name} rate limit reached. Free tiers throttle quickly — wait a "
-            f"moment and retry, or switch LLM_PROVIDER in your .env."
+            f"{name} rate limit reached.{detail} Free tiers throttle quickly — "
+            f"retry shortly, or switch LLM_PROVIDER."
         )
     if "model" in lowered and ("not found" in lowered or "does not exist" in lowered):
         return (
