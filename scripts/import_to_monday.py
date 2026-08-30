@@ -314,10 +314,40 @@ def batch_mutation(size: int) -> str:
     return f"mutation ($boardId: ID!, {args}) {{\n{calls}\n}}"
 
 
+LIST_ITEMS = """
+query ($boardId: ID!) {
+  boards(ids: [$boardId]) { items_page(limit: 25) { items { id name } } }
+}
+"""
+
+DELETE_ITEM = """
+mutation ($itemId: ID!) { delete_item(item_id: $itemId) { id } }
+"""
+
+# monday seeds every new board with sample items. Left in place they become
+# phantom records with all-null fields — a deal with no stage, no sector and
+# no value, which is exactly the shape of a real data-quality problem and
+# would be reported as one.
+PLACEHOLDER_ITEMS = {"Task 1", "Task 2", "Task 3", "Item 1", "Item 2", "Item 3"}
+
+
+def drop_placeholder_items(client: httpx.Client, board_id: str) -> None:
+    data = gql(client, LIST_ITEMS, {"boardId": board_id})
+    boards = data.get("boards") or []
+    if not boards:
+        return
+    for item in boards[0]["items_page"]["items"]:
+        if item["name"] in PLACEHOLDER_ITEMS:
+            gql(client, DELETE_ITEM, {"itemId": str(item["id"])})
+            print(f"    removed monday's placeholder item '{item['name']}'")
+            time.sleep(0.3)
+
+
 def build_board(client: httpx.Client, name: str, plan: list[tuple[str, str, str]]) -> tuple[str, dict]:
     data = gql(client, CREATE_BOARD, {"name": name})
     board_id = data["create_board"]["id"]
     print(f"  created board '{name}' -> id {board_id}")
+    drop_placeholder_items(client, board_id)
 
     mapping: dict[str, tuple[str, str]] = {}
     for source_title, monday_title, kind in plan:

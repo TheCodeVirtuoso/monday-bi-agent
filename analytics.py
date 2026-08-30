@@ -154,6 +154,12 @@ def format_inr(value: float | int | None) -> str | None:
     return ("-" + text) if negative else text
 
 
+def _tagged(value: float | int | None, basis: str) -> str | None:
+    """Format an amount with its basis attached to the string itself."""
+    text = format_inr(value)
+    return f"{text} ({basis})" if text else None
+
+
 def _with_display(stats: dict, keys: Sequence[str]) -> dict:
     """Attach a pre-formatted ``*_display`` string beside each money key."""
     for key in keys:
@@ -427,10 +433,13 @@ def cross_board_view(
                 by: key,
                 "deal_count": d.get("count", 0),
                 "deal_value_sum": d.get("sum"),
-                "deal_value_sum_display": format_inr(d.get("sum")),
+                # The GST basis is baked into the quoted string rather than
+                # left to a sibling field, because a model reading a bare
+                # "₹4.82 Cr" reliably guesses the basis wrong.
+                "deal_value_sum_display": _tagged(d.get("sum"), "deal value"),
                 "work_order_count": w.get("count", 0),
                 "work_order_value_sum": w.get("sum"),
-                "work_order_value_sum_display": format_inr(w.get("sum")),
+                "work_order_value_sum_display": _tagged(w.get("sum"), "excl GST"),
                 "present_on_both_boards": bool(d) and bool(w),
             }
         )

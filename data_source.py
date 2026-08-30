@@ -74,6 +74,13 @@ class DataSourceError(RuntimeError):
 # --------------------------------------------------------------------------
 
 
+# Names that are not names. See the comment at the drop site in
+# ``normalize_deals`` for where each of these comes from.
+_PLACEHOLDER_NAMES = {
+    "(unnamed)", "Task 1", "Task 2", "Task 3", "Item 1", "Item 2", "Item 3",
+}
+
+
 def _is_repeated_header(row: pd.Series, columns: list[str]) -> bool:
     """True if this row is a copy of the header pasted into the data.
 
@@ -116,7 +123,12 @@ def normalize_deals(raw_rows: list[dict], source: str = "file") -> BoardData:
     for i, row in enumerate(raw_rows):
         name = N._clean(row.get("Deal Name"))
 
-        if not name:
+        # Placeholder names, from two different sources: "(unnamed)" is what
+        # the importer writes for a source row with no deal name (monday
+        # requires every item to have one), and "Task 1/2/3" are the sample
+        # items monday auto-creates with a new board. Both are non-data and
+        # must not survive into a count.
+        if not name or name in _PLACEHOLDER_NAMES:
             dropped["no deal name"] = dropped.get("no deal name", 0) + 1
             continue
         if _is_repeated_header(pd.Series(row), list(row.keys())):
@@ -197,6 +209,10 @@ def normalize_work_orders(raw_rows: list[dict], source: str = "file") -> BoardDa
         name = N._clean(row.get("Deal name masked"))
         label = name or serial
 
+        # A work order is identified by its Serial #, not its name — one row
+        # legitimately has a blank deal name. That also catches monday's
+        # placeholder items, which carry no serial, so no name check is
+        # needed here; adding one would discard a real work order.
         if not serial:
             dropped["no serial number"] = dropped.get("no serial number", 0) + 1
             continue
