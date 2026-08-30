@@ -6,31 +6,44 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def env(name: str, default: str = "") -> str:
+    """Read an env var, stripping surrounding whitespace.
+
+    Hosting dashboards use multi-line textareas for secrets, so a pasted
+    token routinely arrives with a trailing newline. That is invisible in the
+    UI and fatal in an HTTP header - httpx rejects the value outright, and the
+    failure surfaces as "Illegal header value" rather than as anything that
+    points at the real cause. Strip once, here.
+    """
+    return (os.getenv(name) or default).strip()
+
+
 # --------------------------------------------------------------------------
 # LLM provider
 # --------------------------------------------------------------------------
 # Three interchangeable backends. Groq and OpenRouter are OpenAI-compatible
 # and reached through the same client; Anthropic uses its own SDK. Which one
-# is active is a config choice, not a code change — see llm.py.
+# is active is a config choice, not a code change - see llm.py.
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+GROQ_API_KEY = env("GROQ_API_KEY")
+OPENROUTER_API_KEY = env("OPENROUTER_API_KEY")
+ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY")
 
 # Defaults chosen for tool-calling reliability, which is what this app leans
 # on. Everything else (math, dates, normalisation) is deterministic Python,
 # so raw model intelligence matters far less here than schema adherence.
 #
 # Verified against this account's live Groq catalogue. Note Groq has RETIRED
-# the llama-3.x ids that most tutorials still reference — they now 404. Models
+# the llama-3.x ids that most tutorials still reference - they now 404. Models
 # confirmed to emit well-formed tool calls here:
 #   openai/gpt-oss-120b   (default; strongest)
 #   openai/gpt-oss-20b    (smaller, faster)
 #   qwen/qwen3.8-27b      (works)
-#   qwen/qwen3.6-27b      (does NOT reliably call tools — avoid)
-GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-chat-v3-0324:free")
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-5")
+#   qwen/qwen3.6-27b      (does NOT reliably call tools - avoid)
+GROQ_MODEL = env("GROQ_MODEL", "openai/gpt-oss-120b")
+OPENROUTER_MODEL = env("OPENROUTER_MODEL", "deepseek/deepseek-chat-v3-0324:free")
+ANTHROPIC_MODEL = env("ANTHROPIC_MODEL", "claude-opus-5")
 
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
@@ -47,7 +60,7 @@ def _auto_provider() -> str:
     return "groq"  # so the error message names a concrete key to set
 
 
-LLM_PROVIDER = (os.getenv("LLM_PROVIDER") or _auto_provider()).lower()
+LLM_PROVIDER = (env("LLM_PROVIDER") or _auto_provider()).lower()
 
 PROVIDERS = {
     "groq": {
@@ -92,17 +105,17 @@ def llm_configured() -> bool:
 # --------------------------------------------------------------------------
 
 MONDAY_API_URL = "https://api.monday.com/v2"
-MONDAY_API_TOKEN = os.getenv("MONDAY_API_TOKEN", "")
-WORK_ORDERS_BOARD_ID = os.getenv("MONDAY_WORK_ORDERS_BOARD_ID", "")
-DEALS_BOARD_ID = os.getenv("MONDAY_DEALS_BOARD_ID", "")
+MONDAY_API_TOKEN = env("MONDAY_API_TOKEN")
+WORK_ORDERS_BOARD_ID = env("MONDAY_WORK_ORDERS_BOARD_ID")
+DEALS_BOARD_ID = env("MONDAY_DEALS_BOARD_ID")
 
 # File mode is on if explicitly requested OR if we simply have no monday
 # credentials. This keeps the app fully runnable before the boards exist.
 USE_MOCK_DATA = (
-    os.getenv("USE_MOCK_DATA", "").lower() in {"1", "true", "yes"}
+    env("USE_MOCK_DATA").lower() in {"1", "true", "yes"}
     or not MONDAY_API_TOKEN
     or not WORK_ORDERS_BOARD_ID
     or not DEALS_BOARD_ID
 )
 
-MONDAY_TIMEOUT_SECONDS = float(os.getenv("MONDAY_TIMEOUT_SECONDS", "20"))
+MONDAY_TIMEOUT_SECONDS = float(env("MONDAY_TIMEOUT_SECONDS", "20"))
