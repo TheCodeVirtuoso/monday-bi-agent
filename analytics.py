@@ -200,7 +200,9 @@ def money_stats(records: Sequence[Record], field: str) -> dict:
         "top_2_share_pct": round(100 * sum(ordered[:2]) / total, 1) if total else None,
     }
 
-    _with_display(stats, ["sum", "median", "mean", "min", "max"])
+    # Only the figures an answer actually quotes get a display string; min
+    # and max keep their raw values for anyone who needs them.
+    _with_display(stats, ["sum", "median", "mean"])
 
     warnings = []
     if stats["coverage_pct"] < 90:
@@ -223,8 +225,14 @@ def breakdown(
     by: str,
     value_field: str | None = None,
     top: int | None = None,
+    include_median: bool = False,
 ) -> list[dict]:
-    """Group records by a field, with per-group count and value coverage."""
+    """Group records by a field, with per-group count and value coverage.
+
+    Per-group medians are off by default. They are seldom what a founder
+    asks for, and every field here is multiplied by the number of groups and
+    the number of breakdowns in a payload the model has to read.
+    """
     groups: dict[str, list[Record]] = {}
     for r in records:
         key = r.get(by)
@@ -240,8 +248,10 @@ def breakdown(
             ]
             row["count_with_value"] = len(vals)
             row["sum"] = float(sum(vals)) if vals else None
-            row["median"] = float(statistics.median(vals)) if vals else None
-            _with_display(row, ["sum", "median"])
+            row["sum_display"] = format_inr(row["sum"])
+            if include_median:
+                row["median"] = float(statistics.median(vals)) if vals else None
+                row["median_display"] = format_inr(row["median"])
         rows.append(row)
 
     rows.sort(key=lambda r: (r.get("sum") is None, -(r.get("sum") or 0), -r["count"]))
@@ -265,9 +275,9 @@ def pipeline_snapshot(deals: Sequence[Record]) -> dict:
         ),
         "open_deal_count": len(open_deals),
         "value": stats,
-        "by_stage": breakdown(open_deals, "stage", "value_inr"),
-        "by_sector": breakdown(open_deals, "sector", "value_inr"),
-        "by_owner": breakdown(open_deals, "owner", "value_inr"),
+        "by_stage": breakdown(open_deals, "stage", "value_inr", top=8),
+        "by_sector": breakdown(open_deals, "sector", "value_inr", top=8),
+        "by_owner": breakdown(open_deals, "owner", "value_inr", top=8),
         "late_stage_count": sum(
             1 for d in open_deals if d.get("stage") in N.LATE_STAGE_DEALS
         ),
@@ -314,8 +324,8 @@ def delivery_snapshot(work_orders: Sequence[Record]) -> dict:
             }
             for w in stalled
         ],
-        "by_status": breakdown(work_orders, "execution_status", "amount_excl_gst"),
-        "by_sector": breakdown(work_orders, "sector", "amount_excl_gst"),
+        "by_status": breakdown(work_orders, "execution_status", "amount_excl_gst", top=8),
+        "by_sector": breakdown(work_orders, "sector", "amount_excl_gst", top=8),
     }
 
 
@@ -363,7 +373,7 @@ def receivables_snapshot(work_orders: Sequence[Record]) -> dict:
             }
             for w in sorted(
                 receivable, key=lambda x: x.get("receivable") or 0, reverse=True
-            )[:10]
+            )[:5]
         ],
         "by_invoice_status": breakdown(work_orders, "invoice_status", "receivable"),
         "negative_to_bill_count": len(negative),

@@ -7,6 +7,7 @@ different numbers.
 """
 
 import asyncio
+import json
 
 import pytest
 
@@ -132,11 +133,17 @@ def test_inr_formatting_is_done_in_code_not_by_the_model(value, expected):
 
 
 def test_money_stats_ship_preformatted_display_strings(boards):
-    """The agents quote these verbatim instead of converting."""
+    """The agents quote these verbatim instead of converting.
+
+    Only the figures an answer actually quotes carry a display string; min
+    and max keep raw values, to hold the payload down for a token-metered
+    free tier.
+    """
     stats = A.money_stats(boards["deals"].records, "value_inr")
-    for key in ("sum", "median", "mean", "min", "max"):
+    for key in ("sum", "median", "mean"):
         assert stats[f"{key}_display"], key
         assert stats[f"{key}_display"].lstrip("-").startswith("₹")
+    assert isinstance(stats["min"], float) and isinstance(stats["max"], float)
 
 
 def test_breakdown_rows_carry_display_strings(boards):
@@ -306,12 +313,25 @@ def test_ar_priority_accounts_are_identified(boards):
 def test_deals_tool_applies_period_and_says_so(boards):
     import tools as T
 
+    # 'this quarter' is outside the data's date range, so the result is
+    # genuinely empty and the empty breakdowns are dropped by compact().
     out = T.run_deals_tool(
         "deals_query",
         {"stage_groups": ["open"], "period": "this quarter"},
         boards["deals"],
     )
     assert any("period read as" in n for n in out["notes"])
+    assert any("outside that range" in n for n in out["notes"])
+    assert out["matched_deals"] == 0
+    assert "by_stage" not in out, "empty breakdowns should not be sent"
+
+    # A period the data does cover keeps the breakdowns.
+    out = T.run_deals_tool(
+        "deals_query",
+        {"stage_groups": ["open"], "period": "all"},
+        boards["deals"],
+    )
+    assert out["matched_deals"] > 0
     assert "value" in out and "by_stage" in out
 
 
@@ -322,4 +342,45 @@ def test_work_orders_receivables_tool_returns_board_caveats(boards):
         "work_orders_snapshot", {"kind": "receivables"}, boards["work_orders"]
     )
     assert out["total_receivable_incl_gst"] > 0
+    # Caveats reach the agent as sentences, not as the structs behind them.
     assert out["board_caveats"]
+    assert all(isinstance(c, str) for c in out["board_caveats"])
+
+
+def test_tool_payloads_stay_within_a_token_metered_budget(boards):
+    """Groq's free tier meters 8,000 tokens/minute across the whole turn.
+
+    Tool results are the largest thing in a request, so each one is capped
+    well under that; a single verbose payload used to consume the lot.
+    """
+    import tools as T
+
+    payloads = {
+        "deals_query": T.run_deals_tool("deals_query", {"stage_groups": ["open"]}, boards["deals"]),
+        "deals_snapshot": T.run_deals_tool("deals_snapshot", {"kind": "pipeline"}, boards["deals"]),
+        "receivables": T.run_work_order_tool("work_orders_snapshot", {"kind": "receivables"}, boards["work_orders"]),
+        "delivery": T.run_work_order_tool("work_orders_snapshot", {"kind": "delivery"}, boards["work_orders"]),
+    }
+    for name, payload in payloads.items():
+        chars = len(json.dumps(payload, default=str))
+        assert chars < 5000, f"{name} payload is {chars} chars (~{chars // 4} tokens)"
+
+
+def test_compact_rounds_floats_and_drops_empties():
+    import tools as T
+
+    out = T.compact({
+        "big": 1132250.2480000001,
+        "small": 0.10432872,
+        "empty_list": [],
+        "empty_dict": {},
+        "none": None,
+        "keep_false": False,
+        "keep_zero": 0,
+        "nested": [{"v": 23959.682484}],
+    })
+    assert out["big"] == 1132250
+    assert out["small"] == 0.1
+    assert "empty_list" not in out and "empty_dict" not in out and "none" not in out
+    assert out["keep_false"] is False and out["keep_zero"] == 0
+    assert out["nested"][0]["v"] == 23960

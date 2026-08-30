@@ -180,6 +180,56 @@ WORK_ORDER_TOOLS: list[dict] = [
 # --------------------------------------------------------------------------
 
 
+def compact(obj):
+    """Shrink a tool result before it is serialised for the model.
+
+    Tool results are the largest thing in every request, and on a free tier
+    metered by tokens-per-minute that is the binding constraint — a single
+    question was spending ~8,700 tokens against an 8,000/min ceiling.
+
+    Two cheap wins, neither of which loses anything a reader would want:
+    full-precision floats (``1132250.2480000001``) become integers at rupee
+    magnitudes, and empty values are dropped. Nobody reports receivables to
+    four decimal places.
+    """
+    if isinstance(obj, bool) or obj is None:
+        return obj
+    if isinstance(obj, float):
+        if obj != obj:  # NaN
+            return None
+        return int(round(obj)) if abs(obj) >= 100 else round(obj, 2)
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            v = compact(v)
+            # Drop keys that carry no information, so the model reads less.
+            if v is None or v == [] or v == {}:
+                continue
+            out[k] = v
+        return out
+    if isinstance(obj, (list, tuple)):
+        return [compact(v) for v in obj]
+    return obj
+
+
+# How much detail a tool returns. Kept small deliberately: a breakdown with
+# forty rows is not more useful to a founder than the top handful, and it
+# costs tokens that the free tier meters by the minute.
+TOP_GROUPS = 8
+SAMPLE_ROWS = 4
+MAX_CAVEATS = 6
+
+
+def _caveat_texts(board: BoardData) -> list[str]:
+    """Send caveats as sentences, not as the structs that produced them.
+
+    The agent only ever quotes ``text``; ``field``/``issue``/``examples``
+    exist for the code that groups them. Caveats are already ordered hard
+    problems first, so truncating keeps the ones that matter.
+    """
+    return [c["text"] for c in board.caveats[:MAX_CAVEATS]]
+
+
 def _apply_period(args: dict, default_date_field: str) -> tuple[dict, list[str]]:
     """Translate a period phrase into filter kwargs plus disclosure notes."""
     notes: list[str] = []
@@ -202,7 +252,7 @@ def run_deals_tool(name: str, args: dict, board: BoardData) -> dict:
             A.pipeline_snapshot(records) if kind == "pipeline"
             else A.funnel_snapshot(records)
         )
-        return {**result, "board_caveats": board.caveats}
+        return compact({**result, "board_caveats": _caveat_texts(board)})
 
     if name == "deals_query":
         period_kwargs, notes = _apply_period(args, "expected_close_date")
@@ -219,30 +269,30 @@ def run_deals_tool(name: str, args: dict, board: BoardData) -> dict:
             match=match or None,
             **period_kwargs,
         )
-        return {
+        return compact({
             "filters_applied": {
                 k: v for k, v in args.items() if v not in (None, [], "")
             },
             "notes": notes + filter_notes,
             "matched_deals": len(kept),
             "value": A.money_stats(kept, "value_inr"),
-            "by_stage": A.breakdown(kept, "stage", "value_inr"),
-            "by_sector": A.breakdown(kept, "sector", "value_inr"),
-            "by_owner": A.breakdown(kept, "owner", "value_inr"),
-            "sample": [
+            "by_stage": A.breakdown(kept, "stage", "value_inr", top=TOP_GROUPS),
+            "by_sector": A.breakdown(kept, "sector", "value_inr", top=TOP_GROUPS),
+            "by_owner": A.breakdown(kept, "owner", "value_inr", top=TOP_GROUPS),
+            "largest_deals": [
                 {
                     "deal_name": r["deal_name"],
                     "stage": r["stage"],
                     "sector": r["sector"],
-                    "value_inr": r["value_inr"],
-                    "expected_close_date": r["expected_close_date"],
+                    "value": A.format_inr(r["value_inr"]),
+                    "expected_close": r["expected_close_date"],
                     "owner": r["owner"],
                 }
                 for r in sorted(
                     kept, key=lambda x: x.get("value_inr") or 0, reverse=True
-                )[:10]
+                )[:SAMPLE_ROWS]
             ],
-        }
+        })
 
     raise ValueError(f"Unknown deals tool: {name}")
 
@@ -256,7 +306,7 @@ def run_work_order_tool(name: str, args: dict, board: BoardData) -> dict:
             A.delivery_snapshot(records) if kind == "delivery"
             else A.receivables_snapshot(records)
         )
-        return {**result, "board_caveats": board.caveats}
+        return compact({**result, "board_caveats": _caveat_texts(board)})
 
     if name == "work_orders_query":
         period_kwargs, notes = _apply_period(args, "start_date")
@@ -275,7 +325,7 @@ def run_work_order_tool(name: str, args: dict, board: BoardData) -> dict:
             match=match or None,
             **period_kwargs,
         )
-        return {
+        return compact({
             "filters_applied": {
                 k: v for k, v in args.items() if v not in (None, [], "")
             },
@@ -283,24 +333,26 @@ def run_work_order_tool(name: str, args: dict, board: BoardData) -> dict:
             "matched_work_orders": len(kept),
             "order_value_excl_gst": A.money_stats(kept, "amount_excl_gst"),
             "receivable_incl_gst": A.money_stats(kept, "receivable"),
-            "by_execution_status": A.breakdown(kept, "execution_status", "amount_excl_gst"),
-            "by_sector": A.breakdown(kept, "sector", "amount_excl_gst"),
-            "by_owner": A.breakdown(kept, "owner", "amount_excl_gst"),
-            "sample": [
+            "by_execution_status": A.breakdown(
+                kept, "execution_status", "amount_excl_gst", top=TOP_GROUPS
+            ),
+            "by_sector": A.breakdown(kept, "sector", "amount_excl_gst", top=TOP_GROUPS),
+            "by_owner": A.breakdown(kept, "owner", "amount_excl_gst", top=TOP_GROUPS),
+            "largest_work_orders": [
                 {
                     "wo_id": r["wo_id"],
                     "deal_name": r["deal_name"],
                     "sector": r["sector"],
                     "execution_status": r["execution_status"],
-                    "amount_excl_gst": r["amount_excl_gst"],
-                    "receivable": r["receivable"],
+                    "order_value": A.format_inr(r["amount_excl_gst"]),
+                    "receivable": A.format_inr(r["receivable"]),
                     "end_date": r["end_date"],
                 }
                 for r in sorted(
                     kept, key=lambda x: x.get("amount_excl_gst") or 0, reverse=True
-                )[:10]
+                )[:SAMPLE_ROWS]
             ],
-        }
+        })
 
     raise ValueError(f"Unknown work order tool: {name}")
 
