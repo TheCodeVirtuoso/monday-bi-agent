@@ -1,204 +1,129 @@
 # Decision Log
 
-Design decisions, the reasoning behind them, and what I would do with more
-time. Written against the real source data, not the plan I started with.
+## 1. Key assumptions
 
----
+**About the data.** The source is masked but internally consistent, and the
+masking is not a defect to correct. I assumed no cross-board entity key
+exists — verified, see §3. I assumed the letter prefixes on deal stages
+(`A.` → `O.`) encode real funnel order and used them rather than inventing an
+ordering. I assumed order value is GST-exclusive and
+billed/collected/receivable are GST-inclusive, as the headers state, and
+never net one against the other.
 
-## 1. Agents own judgment; code owns transformation
+**About the business.** "Pipeline" means open deals only — stages A–F.
+Stages G onward are won and belong to delivery; counting them as pipeline
+double-counts revenue. There is no "Energy" sector in this data; energy work
+is `Renewables` and `Powerline`, so the word expands to both and the agent
+says so.
 
-**Decision.** The two domain agents do not clean data. Every date parse,
-sector mapping, status canonicalisation and rupee sum happens in
-deterministic Python (`normalize.py`, `analytics.py`). The models only decide
-which board and filters a question needs, and how to phrase the result.
+**About scope.** Read-only, per the brief. Board *setup* is separate: a
+one-off script (`scripts/import_to_monday.py`) provisions the boards and
+loads the workbooks. The agent itself never writes.
 
-**Why.** The original plan had each domain agent clean its own board with a
-specialist prompt. Three problems:
+**Ambiguity I resolved without asking.** Where a question has two plausible
+readings, the agent answers the likelier one and states the assumption in one
+line, rather than stalling on a clarifying question. It asks only when no
+reasonable default exists.
 
-1. **Non-determinism.** An LLM parsing `03/04/2026` can produce different
-   answers on different runs. The same question would return different
-   numbers — the one failure mode you cannot recover from in a live demo.
-2. **Latency.** Two extra model round-trips per question, for work that
-   `difflib` and a regex do instantly.
-3. **It is not the interesting part.** Date parsing is a solved problem.
-   Deciding *what "open pipeline" means on this board* is not.
+## 2. Architecture and trade-offs
 
-**Consequence.** Numbers are reproducible and unit-tested (87 tests, no
-network). It also made the free-model migration in §6 cheap: the model never
-touches arithmetic, so a smaller model is a much smaller risk than it would
-otherwise be.
+**Agents own judgment; code owns transformation.** Every date parse, sector
+mapping and rupee aggregation runs in deterministic Python. The models only
+choose filters and write prose.
 
-**Trade-off.** A value the code cannot map is reported as unmapped rather
-than guessed. On this data that is the right call — see §3 — but it does mean
-the vocabularies in `normalize.py` need extending when the source gains new
-categories.
+I originally planned LLM agents that cleaned their own board. I changed it
+because an LLM parsing `03/04/2026` can answer differently on different runs
+— the same question returning different numbers is the one failure you cannot
+recover from in a demo. It also cost two model round-trips for work `difflib`
+does instantly. *Trade-off:* the vocabularies in `normalize.py` must be
+extended when the source gains new categories. Worth it for reproducibility
+and 104 tests that run with no network.
 
----
+**Two agents, not one and not four.** Not because each board needs its own
+cleaning prompt — cleaning is code — but because the vocabularies collide:
+"open" is a funnel stage on one board and a billing state on the other;
+"completed" exists on both meaning different things; sector has 11 values on
+one and 6 on the other. One prompt holding both conflates them. I skipped a
+data-quality agent (caveats travel with the data that produced them) and a
+report-writer agent (formatting happens once at the top) — each would add a
+handoff and a failure point. When both boards are needed the orchestrator
+emits both calls in one turn and `asyncio.gather` overlaps them.
 
-## 2. Two agents, not one, and not four
-
-**Decision.** One specialist per board. No separate data-quality agent, no
-separate report-writer agent.
-
-**Why two.** Not because each board needs its own cleaning prompt — cleaning
-is code. Because each board has its own **meaning**, and the vocabularies
-actively collide:
-
-| Term | Deals board | Work orders board |
-|---|---|---|
-| "open" | stages A–F | a billing state (`WO Status (billed)`) |
-| "sector" | 11 values | 6 values |
-| money | GST-**exclusive** | billed/collected are GST-**inclusive** |
-| "completed" | `Project Completed` (a stage) | `Completed` (execution status) |
-
-A single prompt holding both reliably conflates them. Two narrow prompts do
-not.
-
-**Why not more.** Caveats travel with the data that produced them, so a
-data-quality agent would add a handoff and lose provenance. Formatting
-happens once at the top, so a report-writer agent would add latency for
-nothing. Fewer handoffs, fewer failure points.
-
-**Parallelism is real, not decorative.** When a question needs both boards
-the orchestrator emits both tool calls in one turn and `asyncio.gather`
-overlaps them. Board loading is also concurrent, and cached per session — a
-follow-up question costs model latency only.
-
----
-
-## 3. Unmapped values are reported, never coerced
-
-**Decision.** `canonicalize` tries exact match → alias table → containment →
-fuzzy similarity, and if all four fail returns `None` with
-`CATEGORY_UNMAPPED` rather than snapping to the nearest bucket.
-
-**Why.** Coercion is how a category quietly ends up in the wrong total. The
-validation run against the real data is the argument: of all distinct values
+**Unmapped values are reported, never coerced.** Of all distinct values
 across nine categorical columns, the only three that failed to map were the
-**embedded header rows** — which *should* fail. A more permissive matcher
-would have silently filed `"Sector/service"` under a real sector.
+two embedded header rows — which *should* fail. A more permissive matcher
+would have filed `"Sector/service"` under a real sector.
 
-**Related.** Ambiguity is surfaced rather than hidden. `03/04/2026` parses
-day-first *and* returns `DATE_AMBIGUOUS`. A month-year like `Sep 2026` pins
-to the 1st *and* says it assumed. The value is usable; the assumption is
-visible.
+**Every aggregate carries its coverage.** 52% of deals have no recorded value
+(worse on open deals: only 55 of 140), and the two largest deals are 46% of
+total value. A bare sum is therefore wrong by construction. `money_stats`
+returns `coverage_pct` beside every total and flags concentration, so it is
+structurally impossible to receive a sum without its caveat — rather than
+asking a prompt to remember.
 
----
+**Free model by default, provider-agnostic.** Groq (`openai/gpt-oss-120b`),
+switchable to OpenRouter or Anthropic by env var. This is only affordable
+*because* of the first decision: the model does no arithmetic, so a small
+model is a small risk. The deciding factor was tool-calling reliability, not
+cost. *Discovered in testing:* Groq has retired the `llama-3.x` ids most
+tutorials cite, and `qwen3.6-27b` does not reliably call tools at all.
 
-## 4. Every aggregate carries its coverage
+**Money formatting is done in code.** The first live run reported ₹92.2 Cr as
+"₹9.2 Cr" — my own prompt had invited the model to convert units inline. Both
+formatting and ranking are now precomputed, so the model never converts or
+compares magnitudes itself.
 
-**Decision.** `money_stats` returns `count_with_value` and `coverage_pct`
-beside every sum, and emits warnings when coverage drops below 90% or the top
-two records exceed 25% of the total. Both agents are instructed never to
-quote a total without its coverage.
+**Errors never become silence.** An unreachable board and an empty result are
+distinct paths. A date filter matching nothing reports the range the data
+*does* cover — the trackers end April 2026, so "this quarter" correctly
+returns nothing, and a bare "₹0" would read as "no business".
 
-**Why.** This data makes the point better than any argument:
+## 3. The constraint worth naming
 
-- **52% of deals have no recorded value** (177 of 342), and it is worse on
-  open deals specifically — only 55 of 140 carry a figure. A bare "pipeline
-  is ₹73 Cr" is wrong by construction.
-- **The two largest deals are 46% of total recorded value** (₹75.1 Cr against
-  a ₹11 L median). The mean is not a summary of anything.
+**The boards cannot be joined at row level, and the code enforces it.**
+Client-code namespaces have zero overlap across 199 and 51 distinct codes.
+Deal names overlap but are not unique: `Sakura` covers 27 deal rows and 9
+work-order rows, so a name join yields 243 phantom pairs for that name alone.
+Only owner and sector are shared.
 
-An agent that reports the sum and stops is confidently wrong. The
-architectural fix is to make it *impossible* to receive a sum without its
-coverage, rather than asking a prompt to remember.
+`cross_board_view` raises `UnsafeJoinError` for any other key. A prompt
+instruction is advice; an exception is a guarantee — and this is the
+constraint most likely to produce a confident, plausible, badly wrong answer.
 
----
+## 4. How I interpreted "leadership updates"
 
-## 5. Row-level cross-board joins are refused in code
+As a **paste-ready block, not a dashboard.** A founder wants something they
+can drop into Slack or an email in the next thirty seconds, not another
+surface to log into.
 
-**Decision.** `cross_board_view` accepts only `owner` or `sector` and raises
-`UnsafeJoinError`, with the reason, for anything else. The orchestrator is
-told to explain the limit rather than approximate around it.
+It is an on-demand mode (a toggle in the UI, `leadership=true` on the API),
+not a separate agent — the data and caveats are identical, only the framing
+changes. It emits five sections: **Pipeline** (open value with coverage),
+**Delivery** (active vs stalled, named), **Cash** (receivable, unbilled, AR
+priority), **Watch list** (2–3 items needing a decision this week), and **Data
+caveats** (only those that would change a decision).
 
-**Why.** The original plan assumed a cross-board join was available. The data
-says otherwise:
+The deliberate choice is the watch list: numbers alone are not an update.
+The explicit trade-off is **markdown only — no charts or slides.** With six
+hours, getting the numbers and caveats right mattered more than rendering
+them, and a wrong number in a pretty chart is worse than a right one in text.
 
-- Client codes are **disjoint namespaces** — `COMPANY089` vs
-  `WOCOMPANY_002`, zero literal overlap across 199 and 51 distinct codes.
-- Deal names overlap (52 of 58) but are **not unique**: `Sakura` covers 27
-  deal rows and 9 work-order rows. Joining on name yields 243 phantom pairs
-  for that one name.
+## 5. With more time
 
-The only shared namespace is owner code (`OWNER_001`–`006`, plus `007`
-deals-only and `008` work-orders-only), and sector.
+1. **Evaluation harness** — fixed questions with asserted numeric answers, run
+   per provider. Provider swaps are currently verified by translation unit
+   tests and by hand; they should fail loudly when a model regresses.
+2. **Reconcile `Deal Status` against `Deal Stage`** — the board carries both
+   and they almost certainly disagree on some rows. I treat stage as
+   authoritative and do not yet detect conflicts.
+3. **Investigate negative billing rows** — six work orders show more billed
+   than the order was worth (one at −₹82,907). Flagged as a caveat; deserves
+   its own over-billing report.
+4. **Trend over time** — everything today is a snapshot. `Created Date` would
+   support stage velocity and win-rate-over-time, which is where "how are we
+   doing?" usually leads next.
 
-**Why in code rather than in the prompt.** A prompt instruction is advice; a
-raised exception is a guarantee. This is the constraint most likely to
-produce a confident, plausible, badly wrong answer, so it gets the strongest
-enforcement available.
-
----
-
-## 6. Provider-agnostic LLM layer, free model by default
-
-**Decision.** `llm.py` exposes a neutral conversation and tool format and
-translates to Groq, OpenRouter (both OpenAI-compatible) or Anthropic.
-Switching is an env var. Groq is the default.
-
-**Why it is affordable.** Because of §1. The model does no arithmetic, no
-date parsing and no normalisation — it routes and it writes prose over
-numbers handed to it. That is a low enough bar for a free 70B model. If the
-model were doing the maths, I would not have made this change.
-
-**What actually drove the choice.** Not cost — **tool-calling reliability**,
-since the whole design hangs on function calling, and latency, which matters
-more in a live demo than the bill does. Groq wins on both among free options;
-Anthropic stays configured as a fallback for exactly the case where a free
-model starts emitting malformed tool arguments.
-
-**Defensive detail.** Malformed tool-call JSON degrades to an empty argument
-dict rather than crashing the turn, and tool errors are returned *to the
-model* as results so it can retry — both concessions to smaller models that a
-frontier model would not need.
-
----
-
-## 7. Errors never become silence
-
-**Decision.** `DataSourceError` is distinct from an empty result. An
-unreachable board says so; a genuinely empty selection says *that*. Provider
-failures map to actionable messages naming the env var to fix.
-`/api/health` performs a real load, and reports data health and model
-credentials **separately**.
-
-**Why.** Conflating "the API is down" with "you have no pipeline" is the
-worst thing a BI tool can do. It is also the easy bug: both produce zero
-rows.
-
----
-
-## What I would do with more time
-
-**Load-bearing, in priority order:**
-
-1. **Evaluation harness.** A fixed set of questions with asserted numeric
-   answers, run against each provider. Right now provider swaps are verified
-   by translation unit tests and by hand; they should be verified by a suite
-   that fails when a model regresses.
-2. **Reconcile `Deal Status` against `Deal Stage`.** The board carries both
-   (`Won/Dead/Open/On Hold` vs the A–O funnel). They are partly redundant and
-   almost certainly disagree on some rows. I treat stage as authoritative and
-   do not currently detect conflicts — those rows are a data-quality finding
-   worth surfacing.
-3. **Investigate the negative billing rows.** Six work orders show a negative
-   amount still to bill (one at −₹82,907), meaning more was billed than the
-   order was worth. Currently flagged as a caveat; it deserves a proper
-   over-billing report.
-4. **Trend over time.** Everything today is a snapshot. `Created Date` and
-   `Date of PO/LOI` would support stage-velocity and win-rate-over-time
-   questions, which is where "how are we doing?" usually leads next.
-
-**Deliberately deferred:**
-
-- **Charts and slide generation.** Leadership updates are markdown. Getting
-  the numbers and caveats right was worth more than rendering them prettily.
-- **Persistence.** No database; boards cache per session. A prototype does
-  not need durable state, and adding it would have bought nothing
-  demonstrable.
-- **Write-back to monday.com.** Read-only by design.
-- **A quantity-unit reconciliation pass.** `Quantities as per PO` has ~20
-  units and 91 unitless rows. I normalise the units I can and refuse to sum
-  across them; making quantity totals genuinely trustworthy is a data-entry
-  fix, not a parsing one.
+**Deliberately deferred:** write-back (read-only by design), a database
+(session cache is enough for a prototype), charts, and trustworthy quantity
+totals — `Quantities as per PO` mixes ~20 units with 91 unitless rows, which
+is a data-entry fix, not a parsing one.
