@@ -18,13 +18,15 @@ services:
         value: openai/gpt-oss-120b
       - key: GROQ_API_KEY
         sync: false
-      # Leave the monday.com values unset to run against the workbooks in
-      # data/. Fill them in (and set USE_MOCK_DATA=false) to read live boards.
+      # Read the live monday.com boards, not the workbooks in data/.
+      # Set USE_MOCK_DATA=true only to demo without monday credentials.
       - key: USE_MOCK_DATA
-        value: "true"
+        value: "false"
       - key: MONDAY_API_TOKEN
         sync: false
+      # Board ids are identifiers, not secrets — kept here so a deploy needs
+      # only the two tokens pasted in.
       - key: MONDAY_DEALS_BOARD_ID
-        sync: false
+        value: "5030967679"
       - key: MONDAY_WORK_ORDERS_BOARD_ID
-        sync: false
+        value: "5030967902"

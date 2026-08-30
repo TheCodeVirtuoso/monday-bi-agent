@@ -5,12 +5,13 @@ openai>=1.40.0
 anthropic>=1.0.0
 
 # --- web ---
-# Two front ends over one orchestrator: FastAPI + static chat UI (app.py,
-# used on Render/Railway/Docker) and Gradio (gradio_app.py, used on Hugging
-# Face Spaces, which does not offer Docker on the free tier).
+# The deployed front end is FastAPI + the static chat UI in static/.
+# `gradio_app.py` is an alternative front end over the same orchestrator; its
+# dependency lives in requirements-dev.txt rather than here, because Gradio
+# pulls a large tree and the target free tier has 512 MB of RAM to spend on
+# pandas and the app itself.
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
-gradio>=5.0.0
 httpx>=0.27.0
 pydantic>=2.7.0
 

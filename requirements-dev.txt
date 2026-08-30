@@ -1,3 +1,8 @@
 -r requirements.txt
 
 pytest>=8.0.0
+
+# Alternative front end (gradio_app.py) over the same orchestrator. Kept out
+# of requirements.txt so the deployed service stays small — see the note
+# there, and DEPLOY.md for why Hugging Face Spaces is not a free option.
+gradio>=5.0.0
