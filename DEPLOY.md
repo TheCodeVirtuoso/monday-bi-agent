@@ -16,6 +16,20 @@ without any monday.com credentials.
 4. Deploy. Render polls `/api/health`, which performs a real board load — so
    a green check means the data path works, not just that the process is up.
 
+## Hugging Face Spaces — not viable on the free tier
+
+`gradio_app.py` and the Space front matter are kept for anyone with a PRO
+account, but **HF no longer runs Gradio or Docker Spaces for free**:
+
+> Static Spaces are free for everyone, but hosting Gradio and Docker Spaces
+> on free cpu-basic requires a PRO subscription.
+
+ZeroGPU is the only free hardware a non-PRO account can select, and it
+terminates an app that never requests a GPU — the build succeeds, the app
+logs `Running on local URL: http://0.0.0.0:7860`, then exits 0. Disabling
+Gradio's SSR does not change it. A Space cannot be downgraded to cpu-basic
+in place without PRO either, so there is no free path. Use Render.
+
 ## Railway / Fly / Cloud Run
 
 A `Dockerfile` is included and honours `$PORT`:
