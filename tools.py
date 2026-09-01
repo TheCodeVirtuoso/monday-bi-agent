@@ -400,6 +400,31 @@ ORCHESTRATOR_TOOLS: list[dict] = [
         },
     },
     {
+        "name": "check_data_consistency",
+        "description": (
+            "Cross-check the two boards for contradictions: work orders that "
+            "are being delivered while no deal of that name is recorded as "
+            "won (i.e. the deal still sits in an open stage, or is marked "
+            "lost). Use this for questions about data quality or trust, and "
+            "offer it when a delivery answer looks odd. Matching is by deal "
+            "NAME, which is not unique — each flag is a prompt to go and look, "
+            "never proof of an error, and nothing may be summed across it."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "only_at_risk": {
+                    "type": "boolean",
+                    "description": (
+                        "True (default) checks only active and stalled work "
+                        "orders — the ones where a contradiction still matters. "
+                        "False checks completed ones too."
+                    ),
+                },
+            },
+        },
+    },
+    {
         "name": "compare_boards",
         "description": (
             "Compare the two boards side by side, aligned on owner or sector. "

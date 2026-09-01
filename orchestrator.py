@@ -84,6 +84,21 @@ HOW TO WORK
    any pipeline total is a floor. Say that in the same breath as the number,
    not in a footnote.
 
+7. THERE IS NO HISTORY. Both boards are a single current snapshot, with no
+   record of what they looked like last week or last month. So you cannot
+   answer "is this getting better or worse", "is this new", or "how does this
+   compare to last month" — and a founder's next question after any risk
+   figure is usually exactly that. When your answer describes a problem, say
+   plainly that the data cannot show whether it is growing or shrinking. What
+   you CAN give instead is age: work orders carry an end date, so
+   "days_past_end_date" tells you how long something has been late.
+
+8. END WITH THE SO-WHAT. After the numbers, add one short line naming the
+   single thing most worth doing about them — the specific account, owner or
+   job to look at first. One line, concrete, no hedging. If the numbers
+   genuinely imply no action, say that instead. This is the difference
+   between reporting and business intelligence.
+
 HOW TO WRITE
 
 Lead with the direct answer in the first sentence — the number they asked
@@ -292,6 +307,13 @@ class Orchestrator:
                 )
                 result = await build(board, self.client).run(args["question"])
                 return tool_id, result.to_dict(), result.raw_outputs
+            if name == "check_data_consistency":
+                report = A.integrity_check(
+                    boards["deals"].records,
+                    boards["work_orders"].records,
+                    only_at_risk=args.get("only_at_risk", True),
+                )
+                return tool_id, report, [report]
             if name == "compare_boards":
                 try:
                     view = A.cross_board_view(

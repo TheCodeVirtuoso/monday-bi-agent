@@ -308,22 +308,41 @@ def delivery_snapshot(work_orders: Sequence[Record]) -> dict:
     """Execution status of the work-order book."""
     active = [w for w in work_orders if w.get("execution_group") == "active"]
     stalled = [w for w in work_orders if w.get("execution_group") == "stalled"]
+    today = datetime.now().date()
+
+    def overdue_days(w: Record) -> int | None:
+        end = _as_date(w.get("end_date"))
+        return (today - end).days if end and end < today else None
+
     return {
         "total_work_orders": len(work_orders),
         "active_count": len(active),
         "stalled_count": len(stalled),
         "done_count": sum(1 for w in work_orders if w.get("execution_group") == "done"),
         "active_value": money_stats(active, "amount_excl_gst"),
+        # The stalled total and its concentration are computed here rather than
+        # left to the agent. Anything a model would otherwise have to add up is
+        # a missing tool output: it got "77% of ₹31.69 L" right once, but that
+        # was luck, and luck is not a property worth shipping.
+        "stalled_value": money_stats(stalled, "amount_excl_gst"),
         "stalled_detail": [
             {
                 "wo_id": w["wo_id"],
                 "deal_name": w.get("deal_name"),
+                "customer_code": w.get("customer_code"),
+                "owner": w.get("owner"),
                 "sector": w.get("sector"),
                 "execution_status": w.get("execution_status"),
+                "order_value": format_inr(w.get("amount_excl_gst")),
                 "amount_excl_gst": w.get("amount_excl_gst"),
+                "end_date": w.get("end_date"),
+                "days_past_end_date": overdue_days(w),
             }
-            for w in stalled
+            for w in sorted(
+                stalled, key=lambda x: x.get("amount_excl_gst") or 0, reverse=True
+            )
         ],
+        "overdue_stalled_count": sum(1 for w in stalled if overdue_days(w)),
         "by_status": breakdown(work_orders, "execution_status", "amount_excl_gst", top=8),
         "by_sector": breakdown(work_orders, "sector", "amount_excl_gst", top=8),
     }
@@ -411,6 +430,79 @@ JOIN_KEYS_REFUSED = {
 
 class UnsafeJoinError(ValueError):
     """Raised when a caller tries to join the boards on a key that cannot work."""
+
+
+def integrity_check(
+    deals: Sequence[Record],
+    work_orders: Sequence[Record],
+    only_at_risk: bool = True,
+) -> dict:
+    """Flag work orders whose matching deal name is in a contradictory state.
+
+    This is NOT the join that §JOIN_KEYS_REFUSED rules out. That refusal is
+    about *aggregation*: names are not unique, so summing across a name match
+    invents rows and inflates totals. Naming a pair of records for a human to
+    go and check is a different act — it needs no arithmetic, and a false
+    positive costs a glance rather than a wrong number.
+
+    The contradiction worth surfacing: a work order exists, so the work was
+    sold and started. If every deal sharing that name still sits in an open
+    stage (A-F) or is marked lost, one of the two boards is out of date.
+    """
+    by_name: dict[str, list[Record]] = {}
+    for d in deals:
+        if d.get("deal_name"):
+            by_name.setdefault(d["deal_name"].strip().lower(), []).append(d)
+
+    scope = [
+        w for w in work_orders
+        if not only_at_risk or w.get("execution_group") in ("active", "stalled")
+    ]
+
+    flags, unmatched = [], []
+    for w in scope:
+        name = (w.get("deal_name") or "").strip().lower()
+        if not name:
+            continue
+        matches = by_name.get(name)
+        if not matches:
+            unmatched.append(w["wo_id"])
+            continue
+
+        groups = {d.get("stage_group") for d in matches}
+        if "won" in groups:
+            continue  # consistent: work exists and a deal is won
+
+        flags.append({
+            "wo_id": w["wo_id"],
+            "deal_name": w.get("deal_name"),
+            "execution_status": w.get("execution_status"),
+            "order_value": format_inr(w.get("amount_excl_gst")),
+            "deal_rows_with_this_name": len(matches),
+            "deal_stage_groups": sorted(g for g in groups if g),
+            "why": (
+                "work order exists but no deal of this name is recorded as won"
+            ),
+        })
+
+    return {
+        "method": (
+            "matched on deal name only. Names are NOT unique on either board "
+            "(one name can cover 27 deal rows), so each flag is a prompt to go "
+            "and look, not proof of an error. Never aggregate across this match."
+        ),
+        "scope": "active and stalled work orders" if only_at_risk else "all work orders",
+        "work_orders_checked": len(scope),
+        "flagged_count": len(flags),
+        "flags": flags[:10],
+        "work_orders_with_no_matching_deal_name": len(unmatched),
+        "unmatched_note": (
+            f"{len(unmatched)} work order(s) have a deal name that appears "
+            f"nowhere on the deals board — expected, since the two boards were "
+            f"maintained separately, but worth knowing before trusting any "
+            f"name-based comparison"
+        ) if unmatched else None,
+    }
 
 
 def cross_board_view(

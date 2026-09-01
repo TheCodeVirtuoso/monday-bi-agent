@@ -289,6 +289,65 @@ def test_sector_join_reports_deals_only_sectors(boards):
 # --------------------------------------------------------------------------
 
 
+def test_stalled_work_orders_carry_their_own_totals(boards):
+    """Anything a model would otherwise add up is a missing tool output.
+
+    A live answer computed "77% of ₹31.69 L" by summing five rows by hand.
+    It happened to be right; that is luck, not a guarantee. The snapshot now
+    supplies the total, the concentration, the owner and the overdue days.
+    """
+    snap = A.delivery_snapshot(boards["work_orders"].records)
+
+    assert snap["stalled_value"]["sum_display"].startswith("₹")
+    assert snap["stalled_value"]["top_2_share_pct"] > 0
+    assert snap["stalled_count"] == len(snap["stalled_detail"])
+
+    for row in snap["stalled_detail"]:
+        assert "owner" in row, "an answer cannot report an owner it was never given"
+        assert row["order_value"].startswith("₹")
+        assert "days_past_end_date" in row
+
+    # Largest first, so 'which stalled job matters most' needs no sorting.
+    values = [r["amount_excl_gst"] or 0 for r in snap["stalled_detail"]]
+    assert values == sorted(values, reverse=True)
+
+
+def test_integrity_check_finds_work_delivered_against_unwon_deals(boards):
+    """Cross-board checking that the data CAN support.
+
+    Aggregating across a name match is refused (names are not unique), but
+    naming a pair of rows for a human to inspect needs no arithmetic — and it
+    surfaces genuine contradictions, e.g. work executed against a deal the
+    other board records as lost.
+    """
+    report = A.integrity_check(boards["deals"].records, boards["work_orders"].records)
+
+    assert report["work_orders_checked"] > 0
+    assert report["flagged_count"] > 0
+    method = report["method"].lower()
+    assert "not unique" in method, "the limitation must travel with it"
+    assert "never aggregate" in method
+
+    for flag in report["flags"]:
+        assert "won" not in flag["deal_stage_groups"], "a won deal is consistent"
+        assert flag["order_value"].startswith("₹")
+        assert flag["deal_rows_with_this_name"] >= 1
+
+
+def test_integrity_check_ignores_consistent_rows(boards):
+    """A work order whose deal is won is not a finding."""
+    deals = [{"deal_name": "Sakura", "stage_group": "won"}]
+    wos = [{
+        "wo_id": "W1", "deal_name": "Sakura",
+        "execution_group": "active", "execution_status": "Ongoing",
+        "amount_excl_gst": 1000.0,
+    }]
+    assert A.integrity_check(deals, wos)["flagged_count"] == 0
+
+    deals = [{"deal_name": "Sakura", "stage_group": "lost"}]
+    assert A.integrity_check(deals, wos)["flagged_count"] == 1
+
+
 def test_receivables_snapshot_flags_negative_to_bill(boards):
     snap = A.receivables_snapshot(boards["work_orders"].records)
     assert snap["negative_to_bill_count"] > 0
